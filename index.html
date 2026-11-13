@@ -22,7 +22,7 @@ aside { background: var(--side); border-right: 1px solid var(--line); padding: 1
 .brand b { color: var(--accent); font-weight: 600; }
 .new { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 9px 12px; text-align: left; font: inherit; cursor: pointer; margin-bottom: 10px; }
 .label { font-size: 12px; color: var(--muted); padding: 8px 10px 4px; }
-.chat { border: 0; background: none; color: var(--ink); text-align: left; font: inherit; padding: 8px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat { display: block; width: 100%; border: 0; background: none; color: var(--ink); text-align: left; font: inherit; padding: 8px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat:hover { background: var(--bubble); }
 .chat.on { background: var(--bubble); font-weight: 500; }
 main { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
@@ -131,7 +131,8 @@ $('form').onsubmit = async e => {
   $('live').outerHTML = turnHtml(turn);
   scrollEnd();
   busy = false; $('sendBtn').disabled = false;
-  loadChats();
+  await loadChats();
+  $('title').textContent = document.querySelector('.chat.on')?.title || $('title').textContent;
 };
 $('input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('form').requestSubmit() } };
 
