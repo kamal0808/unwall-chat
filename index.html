@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unwall Chat</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Newsreader:opsz,wght@6..72,400..600&display=swap">
+<style>
+:root {
+  --bg: #f6f4ee; --side: #efece3; --ink: #1f1e1b; --muted: #77736a; --line: #e2ded2;
+  --bubble: #e9e5d9; --accent: #c96442; --card: #fffdf8;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #1f1e1c; --side: #191917; --ink: #ece9e1; --muted: #9b968b; --line: #2f2e2a; --bubble: #2b2a26; --card: #262522; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; height: 100vh; display: grid; grid-template-columns: 264px 1fr; background: var(--bg); color: var(--ink); font: 15px/1.6 Geist, system-ui, sans-serif; }
+aside { background: var(--side); border-right: 1px solid var(--line); padding: 14px 10px; display: flex; flex-direction: column; gap: 4px; overflow: auto; }
+.brand { font: 600 19px Newsreader, Georgia, serif; padding: 6px 10px 14px; }
+.brand b { color: var(--accent); font-weight: 600; }
+.new { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 9px 12px; text-align: left; font: inherit; cursor: pointer; margin-bottom: 10px; }
+.label { font-size: 12px; color: var(--muted); padding: 8px 10px 4px; }
+.chat { border: 0; background: none; color: var(--ink); text-align: left; font: inherit; padding: 8px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat:hover { background: var(--bubble); }
+.chat.on { background: var(--bubble); font-weight: 500; }
+main { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
+.top { padding: 14px 24px; border-bottom: 1px solid var(--line); font-weight: 500; }
+.thread { flex: 1; overflow: auto; padding: 28px 24px 40px; }
+.msg { max-width: 760px; margin: 0 auto 28px; }
+.user { display: flex; justify-content: flex-end; }
+.user p { background: var(--bubble); padding: 10px 16px; border-radius: 16px; margin: 0; max-width: 85%; }
+.plain { font: 17px/1.65 Newsreader, Georgia, serif; }
+.plain code { font-size: 14px; background: var(--bubble); padding: 1px 5px; border-radius: 5px; }
+.wall { max-width: 1100px; }
+.wall iframe { width: 100%; height: 82vh; border: 1px solid var(--line); border-radius: 18px; background: var(--card); display: block; }
+.wall .meta { font-size: 12px; color: var(--muted); margin: 0 0 8px 4px; }
+.composer { padding: 0 24px 22px; }
+.composer div { max-width: 760px; margin: 0 auto; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px; color: var(--muted); box-shadow: 0 2px 10px #0000000d; }
+@media (max-width: 720px) { body { grid-template-columns: 1fr; } aside { display: none; } }
+</style>
+</head>
+<body>
+<aside>
+  <div class="brand">Unwall <b>Chat</b></div>
+  <button class="new">+ New chat</button>
+  <div class="label">Recents</div>
+  <nav id="chats"></nav>
+</aside>
+<main>
+  <div class="top" id="title"></div>
+  <div class="thread" id="thread"></div>
+  <div class="composer"><div>Reply to Claude… (mock: not wired yet)</div></div>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<script>
+// mock chats: the two long answers are Unwall's own examples, read out of unwall.html
+const LONG = 150;
+const CHATS = [
+  {title: 'Should I negotiate my job offer?', msgs: [
+    {role: 'user', text: 'I got a job offer. Should I negotiate the salary, and how?'},
+    {role: 'claude', ex: 'ex-salary'},
+  ]},
+  {title: 'Postgres or MongoDB for a startup', msgs: [
+    {role: 'user', text: 'Postgres or MongoDB for my startup?'},
+    {role: 'claude', ex: 'ex-db'},
+  ]},
+  {title: 'Own UI on the Claude backend', msgs: [
+    {role: 'user', text: "claude desktop is an electron app right? so there's ui and backend separate? can we not just change the UI for ourselves using the same backend?"},
+    {role: 'claude', text: "Yes, it's Electron, and the Code tab is basically a UI on top of the same Claude Code engine you run in a terminal. So yes, you can put your own UI on it, just not by patching the app.\n\n- **Mods (easiest):** the app supports mods: side panels, bands, status lines, slash commands, hooks on tool calls.\n- **Your own frontend:** build any UI on the Claude Agent SDK, or drive `claude -p --output-format stream-json`. Same agent, tools, skills, MCP and CLAUDE.md, but a UI you fully own.\n- **Patching the app (skip):** unpacking `app.asar` works until the next auto-update wipes it, and it breaks code signing."},
+  ]},
+];
+
+const words = s => (s.match(/\S+/g) || []).length;
+const b64u = s => btoa(String.fromCharCode(...new TextEncoder().encode(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+let examples;
+
+async function loadExamples() {
+  const doc = new DOMParser().parseFromString(await (await fetch('unwall.html')).text(), 'text/html');
+  examples = id => doc.getElementById(id).textContent.trim();
+}
+
+function render(i) {
+  const chat = CHATS[i];
+  document.querySelectorAll('.chat').forEach((b, j) => b.classList.toggle('on', j === i));
+  document.getElementById('title').textContent = chat.title;
+  document.getElementById('thread').innerHTML = chat.msgs.map(m => {
+    if (m.role === 'user') return `<div class="msg user"><p>${DOMPurify.sanitize(m.text)}</p></div>`;
+    const md = m.text || examples(m.ex), html = DOMPurify.sanitize(marked.parse(md));
+    if (words(md) < LONG) return `<div class="msg plain">${html}</div>`;
+    // Unwall's bookmarklet entry point: base64 HTML in #add=, it converts and opens the digest
+    return `<div class="msg wall"><p class="meta">${words(md).toLocaleString()} words, unwalled</p><iframe src="unwall.html#add=${b64u(html)}" title="Claude's answer, unwalled"></iframe></div>`;
+  }).join('');
+}
+
+loadExamples().then(() => {
+  document.getElementById('chats').innerHTML = CHATS.map((c, i) => `<button class="chat" onclick="render(${i})">${c.title}</button>`).join('');
+  render(0);
+});
+</script>
+</body>
+</html>
