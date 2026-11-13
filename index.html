@@ -37,68 +37,105 @@ main { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
 .wall iframe { width: 100%; height: 82vh; border: 1px solid var(--line); border-radius: 18px; background: var(--card); display: block; }
 .wall .meta { font-size: 12px; color: var(--muted); margin: 0 0 8px 4px; }
 .composer { padding: 0 24px 22px; }
-.composer div { max-width: 760px; margin: 0 auto; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px; color: var(--muted); box-shadow: 0 2px 10px #0000000d; }
+.composer form { max-width: 760px; margin: 0 auto; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-end; box-shadow: 0 2px 10px #0000000d; }
+.composer textarea { flex: 1; border: 0; background: none; color: var(--ink); font: inherit; resize: none; outline: none; max-height: 200px; }
+.composer button { border: 0; background: var(--accent); color: #fff; border-radius: 10px; padding: 7px 14px; font: inherit; cursor: pointer; }
+.composer button:disabled { opacity: .5; cursor: default; }
+.tools { font-size: 12px; color: var(--muted); margin: 0 0 8px 4px; }
+.live { white-space: pre-wrap; }
+.err { color: var(--accent); }
 @media (max-width: 720px) { body { grid-template-columns: 1fr; } aside { display: none; } }
 </style>
 </head>
 <body>
 <aside>
   <div class="brand">Unwall <b>Chat</b></div>
-  <button class="new">+ New chat</button>
+  <button class="new" onclick="openChat(null)">+ New chat</button>
   <div class="label">Recents</div>
   <nav id="chats"></nav>
 </aside>
 <main>
   <div class="top" id="title"></div>
   <div class="thread" id="thread"></div>
-  <div class="composer"><div>Reply to Claude… (mock: not wired yet)</div></div>
+  <div class="composer"><form id="form"><textarea id="input" rows="1" placeholder="Reply to Claude…" autofocus></textarea><button id="sendBtn">Send</button></form></div>
 </main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 <script>
-// mock chats: the two long answers are Unwall's own examples, read out of unwall.html
 const LONG = 150;
-const CHATS = [
-  {title: 'Should I negotiate my job offer?', msgs: [
-    {role: 'user', text: 'I got a job offer. Should I negotiate the salary, and how?'},
-    {role: 'claude', ex: 'ex-salary'},
-  ]},
-  {title: 'Postgres or MongoDB for a startup', msgs: [
-    {role: 'user', text: 'Postgres or MongoDB for my startup?'},
-    {role: 'claude', ex: 'ex-db'},
-  ]},
-  {title: 'Own UI on the Claude backend', msgs: [
-    {role: 'user', text: "claude desktop is an electron app right? so there's ui and backend separate? can we not just change the UI for ourselves using the same backend?"},
-    {role: 'claude', text: "Yes, it's Electron, and the Code tab is basically a UI on top of the same Claude Code engine you run in a terminal. So yes, you can put your own UI on it, just not by patching the app.\n\n- **Mods (easiest):** the app supports mods: side panels, bands, status lines, slash commands, hooks on tool calls.\n- **Your own frontend:** build any UI on the Claude Agent SDK, or drive `claude -p --output-format stream-json`. Same agent, tools, skills, MCP and CLAUDE.md, but a UI you fully own.\n- **Patching the app (skip):** unpacking `app.asar` works until the next auto-update wipes it, and it breaks code signing."},
-  ]},
-];
-
+const $ = id => document.getElementById(id);
 const words = s => (s.match(/\S+/g) || []).length;
-const b64u = s => btoa(String.fromCharCode(...new TextEncoder().encode(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-let examples;
+const b64u = s => { const b = new TextEncoder().encode(s); let o = ''; for (let i = 0; i < b.length; i += 0x8000) o += String.fromCharCode(...b.subarray(i, i + 0x8000)); return btoa(o).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') };
+const esc = s => s.replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+let current = null, busy = false;
 
-async function loadExamples() {
-  const doc = new DOMParser().parseFromString(await (await fetch('unwall.html')).text(), 'text/html');
-  examples = id => doc.getElementById(id).textContent.trim();
+function toolsLine(tools) {
+  if (!tools.length) return '';
+  const names = [...new Set(tools)];
+  return `<p class="tools">Used ${tools.length} tool${tools.length > 1 ? 's' : ''}: ${esc(names.join(', '))}</p>`;
+}
+function turnHtml(t) {
+  if (t.role === 'user') return `<div class="msg user"><p>${esc(t.text)}</p></div>`;
+  const html = DOMPurify.sanitize(marked.parse(t.text || ''));
+  if (words(t.text) < LONG) return `<div class="msg plain">${toolsLine(t.tools)}${html}</div>`;
+  // Unwall's bookmarklet entry point: base64 HTML in #add=, it converts and opens the digest
+  return `<div class="msg wall">${toolsLine(t.tools)}<p class="meta">${words(t.text).toLocaleString()} words, unwalled</p><iframe src="unwall.html#add=${b64u(html)}" title="Claude's answer, unwalled"></iframe></div>`;
+}
+const scrollEnd = () => { const t = $('thread'); t.scrollTop = t.scrollHeight };
+
+async function loadChats() {
+  const chats = await (await fetch('/api/chats')).json();
+  $('chats').innerHTML = chats.map(c => `<button class="chat${c.id === current ? ' on' : ''}" onclick="openChat('${c.id}')" title="${esc(c.title)}">${esc(c.title)}</button>`).join('');
+}
+async function openChat(id) {
+  if (busy) return;
+  current = id;
+  document.querySelectorAll('.chat').forEach(b => b.classList.toggle('on', b.getAttribute('onclick') === `openChat('${id}')`));
+  $('thread').innerHTML = '';
+  $('title').textContent = id ? document.querySelector('.chat.on')?.title || '' : 'New chat';
+  if (id) { $('thread').innerHTML = (await (await fetch('/api/chats/' + id)).json()).map(turnHtml).join(''); scrollEnd() }
+  $('input').focus();
 }
 
-function render(i) {
-  const chat = CHATS[i];
-  document.querySelectorAll('.chat').forEach((b, j) => b.classList.toggle('on', j === i));
-  document.getElementById('title').textContent = chat.title;
-  document.getElementById('thread').innerHTML = chat.msgs.map(m => {
-    if (m.role === 'user') return `<div class="msg user"><p>${DOMPurify.sanitize(m.text)}</p></div>`;
-    const md = m.text || examples(m.ex), html = DOMPurify.sanitize(marked.parse(md));
-    if (words(md) < LONG) return `<div class="msg plain">${html}</div>`;
-    // Unwall's bookmarklet entry point: base64 HTML in #add=, it converts and opens the digest
-    return `<div class="msg wall"><p class="meta">${words(md).toLocaleString()} words, unwalled</p><iframe src="unwall.html#add=${b64u(html)}" title="Claude's answer, unwalled"></iframe></div>`;
-  }).join('');
-}
+$('form').onsubmit = async e => {
+  e.preventDefault();
+  const text = $('input').value.trim();
+  if (!text || busy) return;
+  busy = true; $('sendBtn').disabled = true; $('input').value = '';
+  $('thread').insertAdjacentHTML('beforeend', turnHtml({role: 'user', text}) + '<div class="msg plain live" id="live"><p class="tools" id="liveTools">Thinking…</p><div id="liveText"></div></div>');
+  scrollEnd();
+  const turn = {role: 'claude', text: '', tools: []};
+  try {
+    const res = await fetch('/api/send', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text, sessionId: current})});
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = '';
+    for (;;) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buf += value;
+      const lines = buf.split('\n'); buf = lines.pop();
+      for (const l of lines.filter(Boolean)) {
+        const ev = JSON.parse(l);
+        if (ev.type === 'session') current = ev.id;
+        if (ev.type === 'text') turn.text += ev.delta;
+        if (ev.type === 'break' && turn.text && !turn.text.endsWith('\n\n')) turn.text += '\n\n';
+        if (ev.type === 'tool') turn.tools.push(ev.name);
+        if (ev.type === 'error') turn.text += `\n\n**Error:** ${ev.message}`;
+      }
+      $('liveTools').textContent = turn.tools.length ? `Working… used ${turn.tools.length} tools: ${[...new Set(turn.tools)].join(', ')}` : 'Thinking…';
+      $('liveText').textContent = turn.text;
+      scrollEnd();
+    }
+  } catch (err) { turn.text += `\n\n**Error:** ${err.message}` }
+  turn.text = turn.text.trim();
+  $('live').outerHTML = turnHtml(turn);
+  scrollEnd();
+  busy = false; $('sendBtn').disabled = false;
+  loadChats();
+};
+$('input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('form').requestSubmit() } };
 
-loadExamples().then(() => {
-  document.getElementById('chats').innerHTML = CHATS.map((c, i) => `<button class="chat" onclick="render(${i})">${c.title}</button>`).join('');
-  render(0);
-});
+loadChats().then(() => openChat(null));
 </script>
 </body>
 </html>
