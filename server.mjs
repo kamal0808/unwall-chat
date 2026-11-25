@@ -10,14 +10,6 @@ const CWD = process.env.CWD || homedir();
 const STATIC = {'/': 'index.html', '/unwall.html': 'unwall.html', '/sessions': 'sessions.html'};
 // written by export-sessions.py on the Mac that has the Claude desktop app
 const SESSIONS_FILE = process.env.SESSIONS_FILE || `${homedir()}/.unwall/sessions.json`;
-// Unwall lays out a long answer by its structure (H1 = title, a TL;DR section = the gist, ## headings = cards),
-// so Claude, which knows what the answer means, writes that structure instead of Unwall guessing it
-const SHAPE = `This chat shows any reply over 150 words as a digest built from its Markdown structure. For such a reply:
-- Start with "# " and a title of at most 8 words that states the answer itself, not the topic.
-- Then "## TL;DR" with 1-2 sentences giving the point a reader must take away.
-- Then one "## " section per part. Each heading says what that part concludes, in at most 8 words, so the headings alone tell the story. Keep each part to one idea.
-- Bold only the few terms a skimmer must not miss.
-Shorter replies stay plain, with no headings.`;
 
 // one Claude turn = the tools it used plus everything it said
 function turns(messages) {
@@ -54,7 +46,6 @@ async function send(req, res) {
     for await (const m of query({prompt: text, options: {
       cwd: await folder(cwd), resume: sessionId || undefined, includePartialMessages: true, abortController: ac,
       settingSources: ['user', 'project', 'local'], permissionMode: 'auto',
-      systemPrompt: {type: 'preset', preset: 'claude_code', append: SHAPE, snapshot: false},
       // shortcut: anything auto mode would ask about is denied, until the page can show approve/deny buttons
       canUseTool: async () => ({behavior: 'deny', message: 'Unwall Chat cannot ask for approval yet, so this was not allowed.'}),
     }})) {
