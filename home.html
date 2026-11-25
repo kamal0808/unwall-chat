@@ -63,6 +63,21 @@ aside h2 { margin: 0; font: 500 18px/1.3 Georgia, serif; flex: 1; }
 aside .body { padding: 16px; overflow-y: auto; }
 aside .body p, aside .body li { margin: 0 0 10px; }
 .close { min-width: 44px; min-height: 44px; border: 0; background: none; color: var(--ink); font-size: 22px; cursor: pointer; }
+.evidence { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+.panel-meta { display: flex; gap: 8px; align-items: center; padding: 0 16px 8px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+select { font: inherit; font-size: 13px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; min-height: 32px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 4px 16px 12px; border-bottom: 1px solid var(--line); }
+.actions a.btn { text-decoration: none; display: inline-flex; align-items: center; }
+aside .body { flex: 1; }
+aside form { margin: 12px 16px 16px; flex-direction: column; align-items: stretch; }
+aside form .row { display: flex; gap: 10px; align-items: flex-end; }
+.quotes { display: flex; flex-direction: column; gap: 6px; }
+.quote { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--muted); border-left: 3px solid var(--accent); padding: 2px 8px; }
+.quote span { flex: 1; }
+.quote button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 16px; min-width: 28px; min-height: 28px; }
+.you blockquote { margin: 0 0 6px; padding-left: 8px; border-left: 3px solid var(--accent); color: var(--muted); font-size: 13px; }
+#quoteBtn { position: fixed; display: none; z-index: 10; }
+.models { font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; justify-content: center; margin: -8px 0 8px; flex-wrap: wrap; }
 .note { font-size: 12px; color: var(--muted); text-align: center; margin: -8px 0 10px; }
 </style>
 </head>
@@ -77,17 +92,28 @@ aside .body p, aside .body li { margin: 0 0 10px; }
     <h2>Needs you</h2>
     <div id="asks"></div>
   </section>
-  <form id="form">
-    <textarea id="input" rows="1" placeholder="Say anything. It goes to the right thread." aria-label="Message"></textarea>
-    <button class="btn primary" type="submit">Send</button>
+  <form id="form" style="flex-direction:column;align-items:stretch">
+    <div class="quotes" id="quotes"></div>
+    <div style="display:flex;gap:10px;align-items:flex-end">
+      <textarea id="input" rows="1" placeholder="Say anything. It goes to the right thread." aria-label="Message"></textarea>
+      <button class="btn primary" type="submit">Send</button>
+    </div>
   </form>
+  <div class="models">Router: <select aria-label="Router model"><option>Haiku (fast)</option><option>Sonnet</option></select> New threads start on: <select aria-label="Default thread model"><option>Sonnet</option><option>Opus</option><option>Haiku</option></select></div>
   <p class="note">Try: "papa wants a GST report in billmobi", "formy still leaves tabs open", or anything new.</p>
 </div>
 
 <aside id="panel" aria-label="Thread">
   <header><h2 id="pTitle"></h2><button class="close" id="pClose" aria-label="Close">×</button></header>
+  <div class="panel-meta">Model: <select id="pModel" aria-label="Thread model"><option>Sonnet</option><option>Opus</option><option>Haiku</option></select> <span id="pState"></span></div>
+  <div class="actions" id="pActions"></div>
   <div class="body" id="pBody"></div>
+  <form id="pForm">
+    <div class="quotes" id="pQuotes"></div>
+    <div class="row"><textarea id="pInput" rows="1" aria-label="Reply to this thread"></textarea><button class="btn primary" type="submit">Send</button></div>
+  </form>
 </aside>
+<button class="btn primary" id="quoteBtn">Quote</button>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -95,16 +121,19 @@ const esc = s => s.replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&g
 
 // mock threads: what the real orchestrator would know about each, in one line
 const threads = {
-  billmobi: {name: 'Billmobi', state: 'working', status: 'tailoring module', words: /billmobi|papa|shop|gst|bill/i,
+  billmobi: {name: 'Billmobi', state: 'working', status: 'tailoring module', words: /billmobi|papa|shop|gst|bill/i, model: 'Opus', check: {label: 'Open Billmobi', href: '#'},
     full: ['Tailoring module is built: measurements per customer, a stitching ticket, and a "ready" SMS.', 'Papa tried it on two orders this morning. One field (collar size) was missing; added.', 'PR merged, running on the mini.']},
-  formy: {name: 'Formy', state: 'working', status: 'testing tab close', words: /formy|form|tab/i,
+  formy: {name: 'Formy', state: 'working', status: 'testing tab close', words: /formy|form|tab/i, model: 'Sonnet',
     full: ['Tabs now close 1 minute after a form is submitted.', 'Peoplewiz profile tabs close by URL, since close_tab can\'t reach them.', 'Tested on 6 forms; one Razorpay page reopened itself, still looking.']},
-  phusphus: {name: 'Phusphus', state: 'needs', status: 'waiting on you', words: /phusphus|dictation|voice/i,
+  phusphus: {name: 'Phusphus', state: 'needs', status: 'waiting on you', words: /phusphus|dictation|voice/i, model: 'Sonnet',
     full: ['Version 0.13 is built: wake word and end-of-speech detection.', 'It ran 2 days on your Air without a crash.', 'Ready to send to the 10 test users once you say yes.']},
   hush: {name: 'Hush', state: 'done', status: 'done', words: /hush/i,
     full: ['Night pass priced at ₹99, kept local, not deployed (Hush is parked till 30 Nov).']},
 };
-const asks = [{thread: 'phusphus', q: 'Send Phusphus 0.13 to the 10 test users?', yes: 'Send it', no: 'Not yet'}];
+// a thread asks only once it believes the thing is ready, and says why
+const asks = [{thread: 'phusphus', q: 'Send Phusphus 0.13 to the 10 test users?', yes: 'Send it', no: 'Not yet',
+  evidence: 'Ready because: 2 days on your Air, 41 dictations, 0 crashes, update tested on Sayan\'s Mac.',
+  preview: ['What goes out: the auto-update to 0.13 for the 10 testers, plus this note in the app:', '"New: say Hey Phusphus to start, and it stops by itself when you stop talking."', 'Not sent: nothing to anyone outside the 10 testers.']}];
 
 function chips() {
   $('chips').innerHTML = Object.entries(threads).filter(([, t]) => t.state !== 'done').map(([k, t]) =>
@@ -112,18 +141,24 @@ function chips() {
 }
 function askStrip() {
   $('needs').style.display = asks.length ? '' : 'none';
-  $('asks').innerHTML = asks.map((a, i) => `<div class="ask"><p><b>${esc(threads[a.thread].name)}:</b> ${esc(a.q)}</p>
-    <button class="btn primary" data-ask="${i}" data-yes="1">${esc(a.yes)}</button><button class="btn" data-ask="${i}">${esc(a.no)}</button></div>`).join('');
+  $('asks').innerHTML = asks.map((a, i) => `<div class="ask"><p><b>${esc(threads[a.thread].name)}:</b> ${esc(a.q)}<span class="evidence" style="display:block">${esc(a.evidence)}</span></p>
+    <button class="btn" data-preview="${i}">Show me first</button><button class="btn primary" data-ask="${i}" data-yes="1">${esc(a.yes)}</button><button class="btn" data-ask="${i}">${esc(a.no)}</button></div>`).join('');
 }
 const add = html => { $('stream').insertAdjacentHTML('beforeend', html); $('stream').scrollTop = $('stream').scrollHeight };
 const receipt = (k, outcome) => `<button class="receipt" data-open="${k}"><span class="dot" style="background:var(--ok)"></span><span class="t">${esc(threads[k].name)}</span><span class="o">${esc(outcome)}</span><span class="open">Read</span></button>`;
 
-function openThread(k) {
-  const t = threads[k];
+let openK = null;
+function openThread(k, extra) {
+  const t = threads[k]; openK = k;
   $('pTitle').textContent = t.name;
-  $('pBody').innerHTML = t.full.map(p => `<p>${esc(p)}</p>`).join('');
+  $('pModel').value = t.model || 'Sonnet';
+  $('pState').textContent = t.state === 'done' ? '· done' : t.state === 'needs' ? '· waiting on you' : '· working';
+  $('pActions').innerHTML = (t.check ? `<a class="btn" href="${t.check.href}" target="_blank" rel="noopener">${esc(t.check.label)} ↗</a>` : '') +
+    (t.state === 'done' ? `<button class="btn primary" data-close="${k}">Looks good, close thread</button><button class="btn" data-wrong="${k}">Not right</button>` : '');
+  $('pBody').innerHTML = (extra || t.full).map(p => `<p>${esc(p)}</p>`).join('');
+  $('pInput').placeholder = `Reply to ${t.name} only…`;
   $('panel').classList.add('open');
-  $('pClose').focus();
+  $('pInput').focus();
 }
 
 function route(text) {
@@ -135,12 +170,29 @@ function route(text) {
   return k;
 }
 
+const quotes = {main: [], panel: []};
+const drawQuotes = () => ['main', 'panel'].forEach(w => $(w === 'main' ? 'quotes' : 'pQuotes').innerHTML =
+  quotes[w].map((q, i) => `<div class="quote"><span>${esc(q.length > 140 ? q.slice(0, 140) + '…' : q)}</span><button type="button" data-unquote="${w}:${i}" aria-label="Remove quote">×</button></div>`).join(''));
+const quoted = w => { const html = quotes[w].map(q => `<blockquote>${esc(q)}</blockquote>`).join(''); quotes[w] = []; drawQuotes(); return html };
+
+$('pForm').onsubmit = e => {
+  e.preventDefault();
+  const text = $('pInput').value.trim();
+  if (!text && !quotes.panel.length) return;
+  $('pInput').value = '';
+  const t = threads[openK];
+  $('pBody').insertAdjacentHTML('beforeend', `<div class="you" style="margin:0 0 10px auto;width:fit-content">${quoted('panel')}${esc(text)}</div>`);
+  t.state = 'working'; t.status = 'on it'; chips();
+  add(`<div class="ack">You → <b>${esc(t.name)}</b> (from its panel)</div>`);
+};
+$('pInput').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('pForm').requestSubmit() } };
+
 $('form').onsubmit = e => {
   e.preventDefault();
   const text = $('input').value.trim();
-  if (!text) return;
+  if (!text && !quotes.main.length) return;
   $('input').value = '';
-  add(`<div class="you">${esc(text)}</div>`);
+  add(`<div class="you">${quoted('main')}${esc(text)}</div>`);
   const k = route(text), t = threads[k], fresh = k.startsWith('new');
   t.state = 'working'; t.status = 'on it'; chips();
   add(`<div class="ack">On it → <b>${esc(t.name)}</b>${fresh ? ' (new thread)' : ''} <button class="link" data-move="${k}">Wrong thread?</button></div>`);
@@ -154,6 +206,16 @@ $('input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventD
 
 document.body.addEventListener('click', e => {
   const o = e.target.closest('[data-open]'); if (o) return openThread(o.dataset.open);
+  const pv = e.target.closest('[data-preview]'); if (pv) { const a = asks[+pv.dataset.preview]; return openThread(a.thread, a.preview) }
+  const c = e.target.closest('[data-close]'); if (c) { $('panel').classList.remove('open'); add(`<div class="ack">Closed → <b>${esc(threads[c.dataset.close].name)}</b> (its facts go to the brain)</div>`); return }
+  const w = e.target.closest('[data-wrong]'); if (w) { $('pInput').placeholder = 'What is not right?'; $('pInput').focus(); return }
+  const uq = e.target.closest('[data-unquote]'); if (uq) { const [where, i] = uq.dataset.unquote.split(':'); quotes[where].splice(+i, 1); drawQuotes(); return }
+  if (e.target.id === 'quoteBtn') {
+    const sel = getSelection(), text = sel.toString().trim();
+    const where = $('panel').contains(sel.anchorNode) ? 'panel' : 'main';
+    if (text) { quotes[where].push(text); drawQuotes(); sel.removeAllRanges(); $(where === 'main' ? 'input' : 'pInput').focus() }
+    $('quoteBtn').style.display = 'none'; return;
+  }
   const a = e.target.closest('[data-ask]');
   if (a) {
     const ask = asks.splice(+a.dataset.ask, 1)[0], t = threads[ask.thread];
@@ -165,13 +227,21 @@ document.body.addEventListener('click', e => {
   const b = e.target.closest('.batch'); if (b) { b.classList.toggle('open'); b.setAttribute('aria-expanded', b.classList.contains('open')); return }
   const m = e.target.closest('[data-move]'); if (m) { m.outerHTML = '<span>Moved to a new thread (mock)</span>'; }
 });
+document.addEventListener('mouseup', () => setTimeout(() => {
+  const sel = getSelection(), b = $('quoteBtn');
+  const inside = sel.rangeCount && ($('stream').contains(sel.anchorNode) || $('pBody').contains(sel.anchorNode));
+  if (!inside || !sel.toString().trim()) { b.style.display = 'none'; return }
+  const r = sel.getRangeAt(0).getBoundingClientRect();
+  b.style.display = 'block'; b.style.top = Math.max(8, r.top - 46) + 'px'; b.style.left = Math.min(innerWidth - 90, r.left) + 'px';
+}, 0));
+$('quoteBtn').onmousedown = e => e.preventDefault(); // keep the selection alive for the click
 $('pClose').onclick = () => $('panel').classList.remove('open');
 document.addEventListener('keydown', e => { if (e.key === 'Escape') $('panel').classList.remove('open') });
 
 // a morning's stream so far
 add(`<div class="you">add tags to the sessions page</div>`);
 add(`<div class="ack">On it → <b>Unwall</b></div>`);
-threads.unwall = {name: 'Unwall', state: 'done', status: 'done', words: /unwall|session|sidebar/i, full: ['Tags added to the sessions page: 3 colours, filter chips at the top.', 'Deployed on the mini.']};
+threads.unwall = {name: 'Unwall', state: 'done', status: 'done', model: 'Sonnet', check: {label: 'Open the sessions page', href: '/sessions'}, words: /unwall|session|sidebar/i, full: ['Tags added to the sessions page: 3 colours, filter chips at the top.', 'Deployed on the mini.']};
 add(receipt('unwall', 'tags added, deployed on the mini'));
 add(`<button class="receipt batch" aria-expanded="false"><span class="dot" style="background:var(--ok)"></span><span class="t">2 done</span><span class="o">Hush and Unwall finished while you were typing</span><span class="open">Show</span></button>
   <div class="batch-items">${receipt('hush', 'night pass priced at ₹99')}${receipt('unwall', 'sessions page synced')}</div>`);
