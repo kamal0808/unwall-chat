@@ -2,36 +2,15 @@ import {createServer} from 'node:http';
 import {readFile, mkdir} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {query, listSessions, getSessionMessages} from '@anthropic-ai/claude-agent-sdk';
+import {one, turns} from './one.mjs';
 
 const PORT = Number(process.env.PORT || 4321);
 // bind to one address (the Tailscale IP on the mini): this server runs an agent on the machine, so never expose it on the LAN
 const HOST = process.env.HOST || '127.0.0.1';
 const CWD = process.env.CWD || homedir();
-const STATIC = {'/': 'index.html', '/unwall.html': 'unwall.html', '/sessions': 'sessions.html', '/home': 'home.html'};
+const STATIC = {'/': 'index.html', '/unwall.html': 'unwall.html', '/sessions': 'sessions.html', '/home': 'home.html', '/mock': 'mock.html'};
 // written by export-sessions.py on the Mac that has the Claude desktop app
 const SESSIONS_FILE = process.env.SESSIONS_FILE || `${homedir()}/.unwall/sessions.json`;
-
-// one Claude turn = the tools it used plus everything it said
-function turns(messages) {
-  const out = [];
-  for (const m of messages) {
-    if (m.parent_tool_use_id) continue;
-    const c = m.message?.content;
-    if (m.type === 'user') {
-      const text = typeof c === 'string' ? c : (c || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-      if (text && !text.startsWith('<')) out.push({role: 'user', text});
-      continue;
-    }
-    if (m.type !== 'assistant' || !Array.isArray(c)) continue;
-    let t = out.at(-1);
-    if (t?.role !== 'claude') out.push(t = {role: 'claude', text: '', tools: []});
-    for (const b of c) {
-      if (b.type === 'text') t.text += (t.text ? '\n\n' : '') + b.text;
-      if (b.type === 'tool_use') t.tools.push(b.name);
-    }
-  }
-  return out;
-}
 
 async function send(req, res) {
   let body = '';
@@ -75,6 +54,7 @@ createServer(async (req, res) => {
       res.writeHead(200, {'content-type': 'text/html; charset=utf-8'});
       return res.end(await readFile(new URL(STATIC[url.pathname], import.meta.url)));
     }
+    if (url.pathname.startsWith('/api/one') && await one(req, res, url) !== false) return;
     if (url.pathname === '/api/chats') {
       const list = await listSessions({dir: CWD, limit: 40});
       return json(res, 200, list.map(s => ({id: s.sessionId, title: s.customTitle || s.summary || s.firstPrompt || 'Untitled', at: s.lastModified})));
