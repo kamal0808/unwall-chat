@@ -7,7 +7,9 @@ const PORT = Number(process.env.PORT || 4321);
 // bind to one address (the Tailscale IP on the mini): this server runs an agent on the machine, so never expose it on the LAN
 const HOST = process.env.HOST || '127.0.0.1';
 const CWD = process.env.CWD || homedir();
-const STATIC = {'/': 'index.html', '/unwall.html': 'unwall.html'};
+const STATIC = {'/': 'index.html', '/unwall.html': 'unwall.html', '/sessions': 'sessions.html'};
+// written by export-sessions.py on the Mac that has the Claude desktop app
+const SESSIONS_FILE = process.env.SESSIONS_FILE || `${homedir()}/.unwall/sessions.json`;
 
 // one Claude turn = the tools it used plus everything it said
 function turns(messages) {
@@ -73,6 +75,10 @@ createServer(async (req, res) => {
     if (url.pathname === '/api/chats') {
       const list = await listSessions({dir: CWD, limit: 40});
       return json(res, 200, list.map(s => ({id: s.sessionId, title: s.customTitle || s.summary || s.firstPrompt || 'Untitled', at: s.lastModified})));
+    }
+    if (url.pathname === '/api/sessions') {
+      res.writeHead(200, {'content-type': 'application/json', 'cache-control': 'no-store'});
+      return res.end(await readFile(SESSIONS_FILE).catch(() => '[]'));
     }
     const m = url.pathname.match(/^\/api\/chats\/([\w-]+)$/);
     if (m) return json(res, 200, turns(await getSessionMessages(m[1], {dir: CWD})));
