@@ -62,10 +62,8 @@ main { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 <script>
-const LONG = 150;
 const $ = id => document.getElementById(id);
 const words = s => (s.match(/\S+/g) || []).length;
-const b64u = s => { const b = new TextEncoder().encode(s); let o = ''; for (let i = 0; i < b.length; i += 0x8000) o += String.fromCharCode(...b.subarray(i, i + 0x8000)); return btoa(o).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') };
 const esc = s => s.replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 let current = null, busy = false, cwd = null;
 
@@ -77,9 +75,7 @@ function toolsLine(tools) {
 function turnHtml(t) {
   if (t.role === 'user') return `<div class="msg user"><p>${esc(t.text)}</p></div>`;
   const html = DOMPurify.sanitize(marked.parse(t.text || ''));
-  if (words(t.text) < LONG) return `<div class="msg plain">${toolsLine(t.tools)}${html}</div>`;
-  // Unwall's bookmarklet entry point: base64 HTML in #add=, it converts and opens the digest
-  return `<div class="msg wall">${toolsLine(t.tools)}<p class="meta">${words(t.text).toLocaleString()} words, unwalled</p><iframe src="unwall.html#add=${b64u(html)}" title="Claude's answer, unwalled"></iframe></div>`;
+  return `<div class="msg plain">${toolsLine(t.tools)}${html}</div>`;
 }
 const scrollEnd = () => { const t = $('thread'); t.scrollTop = t.scrollHeight };
 
