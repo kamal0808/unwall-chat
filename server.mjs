@@ -7,7 +7,7 @@ const PORT = Number(process.env.PORT || 4321);
 // bind to one address (the Tailscale IP on the mini): this server runs an agent on the machine, so never expose it on the LAN
 const HOST = process.env.HOST || '127.0.0.1';
 const CWD = process.env.CWD || homedir();
-const STATIC = {'/': 'index.html', '/unwall.html': 'unwall.html', '/sessions': 'sessions.html'};
+const STATIC = {'/': 'index.html', '/unwall.html': 'unwall.html', '/sessions': 'sessions.html', '/home': 'home.html'};
 // written by export-sessions.py on the Mac that has the Claude desktop app
 const SESSIONS_FILE = process.env.SESSIONS_FILE || `${homedir()}/.unwall/sessions.json`;
 
