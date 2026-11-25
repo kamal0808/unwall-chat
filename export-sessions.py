@@ -22,6 +22,8 @@ for path in glob.glob(os.path.join(ROOT, '*', '*', 'local_*.json')):
         'title': s.get('title') or 'Untitled',
         'cwd': s.get('cwd') or '',
         'archived': bool(s.get('isArchived')),
+        # a session started from another sits under it in the app's sidebar, until moved to top level
+        'parent': None if s.get('lineageDetached') else (s.get('spawnedFrom') or {}).get('sessionId'),
         'created': s.get('createdAt'),
         'active': s.get('lastActivityAt') or s.get('createdAt'),
     })
