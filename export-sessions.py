@@ -19,6 +19,7 @@ for path in glob.glob(os.path.join(ROOT, '*', '*', 'local_*.json')):
         continue
     out.append({
         'id': s.get('sessionId'),
+        'cli': s.get('cliSessionId'),
         'title': s.get('title') or 'Untitled',
         'cwd': s.get('cwd') or '',
         'archived': bool(s.get('isArchived')),

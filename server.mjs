@@ -1,5 +1,5 @@
 import {createServer} from 'node:http';
-import {readFile} from 'node:fs/promises';
+import {readFile, mkdir} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {query, listSessions, getSessionMessages} from '@anthropic-ai/claude-agent-sdk';
 
@@ -36,7 +36,7 @@ function turns(messages) {
 async function send(req, res) {
   let body = '';
   for await (const chunk of req) body += chunk;
-  const {text, sessionId} = JSON.parse(body || '{}');
+  const {text, sessionId, cwd} = JSON.parse(body || '{}');
   if (typeof text !== 'string' || !text.trim()) return json(res, 400, {error: 'empty message'});
   res.writeHead(200, {'content-type': 'application/x-ndjson', 'cache-control': 'no-store'});
   const line = o => res.write(JSON.stringify(o) + '\n');
@@ -44,7 +44,7 @@ async function send(req, res) {
   res.on('close', () => ac.abort());
   try {
     for await (const m of query({prompt: text, options: {
-      cwd: CWD, resume: sessionId || undefined, includePartialMessages: true, abortController: ac,
+      cwd: await folder(cwd), resume: sessionId || undefined, includePartialMessages: true, abortController: ac,
       settingSources: ['user', 'project', 'local'], permissionMode: 'auto',
       // shortcut: anything auto mode would ask about is denied, until the page can show approve/deny buttons
       canUseTool: async () => ({behavior: 'deny', message: 'Unwall Chat cannot ask for approval yet, so this was not allowed.'}),
@@ -62,6 +62,9 @@ async function send(req, res) {
   }
   res.end();
 }
+
+// a session resumes in its own folder; one that only exists on the other Mac (a worktree) gets an empty stand-in
+const folder = async cwd => { if (!cwd) return CWD; await mkdir(cwd, {recursive: true}); return cwd };
 
 const json = (res, code, o) => { res.writeHead(code, {'content-type': 'application/json'}); res.end(JSON.stringify(o)) };
 
@@ -81,7 +84,11 @@ createServer(async (req, res) => {
       return res.end(await readFile(SESSIONS_FILE).catch(() => '[]'));
     }
     const m = url.pathname.match(/^\/api\/chats\/([\w-]+)$/);
-    if (m) return json(res, 200, turns(await getSessionMessages(m[1], {dir: CWD})));
+    if (m) {
+      const list = await getSessionMessages(m[1], {dir: url.searchParams.get('cwd') || CWD}).catch(() => []);
+      if (!list.length) return json(res, 404, {error: 'This session is not on this machine yet. Run sync-sessions.sh on the Mac that has it.'});
+      return json(res, 200, turns(list));
+    }
     if (url.pathname === '/api/send' && req.method === 'POST') return send(req, res);
     json(res, 404, {error: 'not found'});
   } catch (e) {

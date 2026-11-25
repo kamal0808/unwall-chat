@@ -22,13 +22,14 @@ input[type=search] { flex: 1; min-width: 200px; border: 1px solid var(--line); b
 .chip small { color: inherit; opacity: .6; margin-left: 4px; }
 .folders { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 18px; }
 ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
-li { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 9px 4px; border-bottom: 1px solid var(--line); }
+li { cursor: pointer; display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 9px 4px; border-bottom: 1px solid var(--line); }
 .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tag { font-size: 12px; color: var(--muted); background: var(--bubble); border-radius: 6px; padding: 1px 7px; white-space: nowrap; }
 .tag.arch { background: none; border: 1px solid var(--line); }
 .when { font-size: 13px; color: var(--muted); white-space: nowrap; min-width: 74px; text-align: right; }
 .sub-mark { color: var(--muted); margin-right: 6px; }
 .kids { font-size: 12px; color: var(--muted); }
+li:hover { background: var(--bubble); }
 .empty { color: var(--muted); padding: 30px 0; text-align: center; }
 @media (max-width: 600px) { li { grid-template-columns: 1fr auto; } .when { display: none; } }
 </style>
@@ -59,6 +60,7 @@ const ago = t => {
 const esc = s => s.replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
 let all = [], state = 'open', folder = null;
+const open_ = (cli, cwd, title) => { if (cli) location.href = '/?' + new URLSearchParams({s: cli, cwd, title}) };
 
 function draw() {
   const q = $('q').value.trim().toLowerCase();
@@ -73,7 +75,7 @@ function draw() {
   for (const s of shown) if (ids.has(s.parent)) (kids[s.parent] ||= []).push(s);
   const walk = (s, depth) => { rows.push([s, depth]); for (const k of kids[s.id] || []) walk(k, depth + 1) };
   for (const s of shown) if (!ids.has(s.parent)) walk(s, 0);
-  $('list').innerHTML = rows.map(([s, depth]) => `<li title="${esc(s.cwd)}">
+  $('list').innerHTML = rows.map(([s, depth]) => `<li title="${esc(s.cwd)}" onclick="open_(${esc(JSON.stringify(s.cli))}, ${esc(JSON.stringify(s.cwd))}, ${esc(JSON.stringify(s.title))})">
     <span class="title" style="padding-left:${depth * 22}px">${depth ? '<span class="sub-mark">↳</span>' : ''}${esc(s.title)}${kids[s.id] ? ` <small class="kids">${kids[s.id].length}</small>` : ''}</span>
     <span>${s.archived ? '<span class="tag arch">archived</span> ' : ''}<span class="tag">${esc(s.folder)}</span></span>
     <span class="when">${ago(s.active)}</span></li>`).join('') || '<li class="empty">No sessions match.</li>';

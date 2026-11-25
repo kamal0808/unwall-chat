@@ -67,7 +67,7 @@ const $ = id => document.getElementById(id);
 const words = s => (s.match(/\S+/g) || []).length;
 const b64u = s => { const b = new TextEncoder().encode(s); let o = ''; for (let i = 0; i < b.length; i += 0x8000) o += String.fromCharCode(...b.subarray(i, i + 0x8000)); return btoa(o).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') };
 const esc = s => s.replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
-let current = null, busy = false;
+let current = null, busy = false, cwd = null;
 
 function toolsLine(tools) {
   if (!tools.length) return '';
@@ -85,15 +85,15 @@ const scrollEnd = () => { const t = $('thread'); t.scrollTop = t.scrollHeight };
 
 async function loadChats() {
   const chats = await (await fetch('/api/chats')).json();
-  $('chats').innerHTML = chats.map(c => `<button class="chat${c.id === current ? ' on' : ''}" onclick="openChat('${c.id}')" title="${esc(c.title)}">${esc(c.title)}</button>`).join('');
+  $('chats').innerHTML = chats.map(c => `<button class="chat${c.id === current ? ' on' : ''}" onclick="cwd = null; openChat('${c.id}')" title="${esc(c.title)}">${esc(c.title)}</button>`).join('');
 }
-async function openChat(id) {
+async function openChat(id, title) {
   if (busy) return;
   current = id;
   document.querySelectorAll('.chat').forEach(b => b.classList.toggle('on', b.getAttribute('onclick') === `openChat('${id}')`));
   $('thread').innerHTML = '';
-  $('title').textContent = id ? document.querySelector('.chat.on')?.title || '' : 'New chat';
-  if (id) { $('thread').innerHTML = (await (await fetch('/api/chats/' + id)).json()).map(turnHtml).join(''); scrollEnd() }
+  $('title').textContent = id ? title || document.querySelector('.chat.on')?.title || '' : 'New chat';
+  if (id) { $('thread').innerHTML = (await (await fetch('/api/chats/' + id + (cwd ? '?cwd=' + encodeURIComponent(cwd) : ''))).json()).map(turnHtml).join(''); scrollEnd() }
   $('input').focus();
 }
 
@@ -106,7 +106,7 @@ $('form').onsubmit = async e => {
   scrollEnd();
   const turn = {role: 'claude', text: '', tools: []};
   try {
-    const res = await fetch('/api/send', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text, sessionId: current})});
+    const res = await fetch('/api/send', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text, sessionId: current, cwd})});
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let buf = '';
     for (;;) {
@@ -136,7 +136,10 @@ $('form').onsubmit = async e => {
 };
 $('input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('form').requestSubmit() } };
 
-loadChats().then(() => openChat(null));
+// /?s=<session id>&cwd=<folder>&title=… opens a session from the all-sessions page
+const q = new URLSearchParams(location.search);
+cwd = q.get('cwd');
+loadChats().then(() => openChat(q.get('s'), q.get('title')));
 </script>
 </body>
 </html>
