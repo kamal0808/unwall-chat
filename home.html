@@ -235,6 +235,8 @@ $('input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventD
 
 document.body.addEventListener('click', async e => {
   const o = e.target.closest('[data-open]'); if (o) return openThread(o.dataset.open);
+  // a click anywhere outside the open panel closes it (the Quote button belongs to the panel's selection)
+  if ($('panel').classList.contains('open') && !$('panel').contains(e.target) && e.target.id !== 'quoteBtn' && !getSelection().toString().trim()) { $('panel').classList.remove('open'); openK = null }
   const c = e.target.closest('[data-close]'); if (c) { await fetch(`/api/one/thread/${c.dataset.close}/close`, {method: 'POST'}); $('panel').classList.remove('open'); openK = null; return poll() }
   const an = e.target.closest('[data-answer]'); if (an) { const t = threads[an.dataset.answer]; quote = {thread: t.id, from: t.name, text: t.ask}; drawQuote(); $('input').focus(); return }
   const rp = e.target.closest('[data-reply]'); if (rp) { quote = {thread: rp.dataset.reply, from: name(rp.dataset.reply), text: ''}; drawQuote(); $('input').focus(); return }
