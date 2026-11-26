@@ -39,10 +39,10 @@ export class Box extends DurableObject {
       return json({stream: s.stream.filter(x => x.id > after), threads, settings: s.settings, airOnline: Date.now() - this.seen < 120000});
     }
     if (p === '/api/one' && req.method === 'POST') {
-      const {text, quote} = await body();
+      const {text, quote, revive} = await body();
       if (typeof text !== 'string' || !text.trim()) return json({error: 'empty message'}, 400);
       const you = this.push({kind: 'you', text: text.trim()});
-      s.inbox.push({type: 'message', re: you.id, text: text.trim(), quote: quote || null});
+      s.inbox.push({type: 'message', re: you.id, text: text.trim(), quote: quote || null, revive: revive?.cli ? revive : null});
       await this.save(); this.wake();
       return json({ok: true}, 202);
     }

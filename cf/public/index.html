@@ -44,6 +44,10 @@ h1 small { font: 12px system-ui; color: var(--muted); margin-left: 8px; }
 .src { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .ack { align-self: flex-start; font-size: 13px; color: var(--muted); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .ack b { color: var(--ink); font-weight: 500; }
+.working { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--accent); padding: 4px 0 10px; }
+.working[hidden] { display: none; }
+.working .glyph { width: 1.1em; text-align: center; }
+.working .what { color: var(--muted); }
 .link { border: 0; background: none; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; padding: 6px 2px; }
 .receipt { display: flex; align-items: flex-start; gap: 10px; text-align: left; width: 100%; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 12px; padding: 10px 14px; font: inherit; cursor: pointer; min-height: 44px; }
 .receipt:hover { border-color: var(--muted); }
@@ -116,6 +120,7 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
     <div class="chips" id="chips" aria-label="Threads at work"></div>
   </header>
   <div id="stream" aria-live="polite"></div>
+  <div class="working" id="working" hidden aria-live="off"><span class="glyph" id="glyph">✻</span><span id="verb">Thinking…</span><span class="what" id="what"></span></div>
   <section class="needs-strip" id="needs" aria-label="Needs you" style="display:none">
     <h2>Needs you</h2>
     <div id="asks"></div>
@@ -184,7 +189,7 @@ function item(s) {
   if (s.kind === 'you') { said[s.id] = s.text; const q = s.text.match(/^((?:> .*\n?)+)\n*([\s\S]*)$/); return q ? `<div class="you"><blockquote>${esc(q[1].replace(/^> /gm, ''))}</blockquote>${esc(q[2])}</div>` : `<div class="you">${esc(s.text)}</div>` }
   if (s.kind === 'claude') {
     const re = s.re && s.re !== lastId && said[s.re] ? `<p class="re">↳ re: “${esc(said[s.re].slice(0, 90))}${said[s.re].length > 90 ? '…' : ''}”</p>` : '';
-    const past = (s.sessions || []).map(p => `<span class="btn" title="${esc(p.cwd)}">${esc(p.title)} · ${new Date(p.active).toLocaleDateString(undefined, {day: 'numeric', month: 'short'})}</span>`).join('');
+    const past = (s.sessions || []).map(p => `<button class="btn" data-revive="${esc(JSON.stringify(p))}" title="Reopen this conversation">${esc(p.title)} · ${new Date(p.active).toLocaleDateString(undefined, {day: 'numeric', month: 'short'})}</button>`).join('');
     return `<div class="claude">${re}${md(s.text)}${past ? `<div class="past">${past}</div>` : ''}</div>`;
   }
   if (s.kind === 'ask') return `<div class="ack">Needs you → <b>${esc(name(s.thread))}</b> (question above the box)</div>`;
@@ -203,6 +208,24 @@ function chips() {
   $('chips').innerHTML = Object.values(threads).filter(t => !t.closed && ['working', 'queued'].includes(t.state)).map(t =>
     `<button class="chip working" data-open="${t.id}"><span class="dot"></span>${esc(t.name)} <span class="st">· ${t.state === 'queued' ? 'starting' : 'working'}</span></button>`).join('');
 }
+// the Claude-style "working" line: a spinning star and a playful verb while anything is in flight
+const GLYPHS = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
+const VERBS = ['Flabbergasting', 'Billowing', 'Pondering', 'Noodling', 'Percolating', 'Mulling', 'Brewing', 'Simmering', 'Conjuring', 'Untangling', 'Ruminating', 'Tinkering', 'Marinating', 'Wrangling', 'Moseying', 'Schlepping'];
+const seenYou = {}, answered = new Set();
+let tick = 0;
+function working() {
+  const waiting = Object.keys(seenYou).filter(id => !answered.has(+id) && Date.now() - seenYou[id] < 6e5).length;
+  const busy = Object.values(threads).filter(t => !t.closed && ['working', 'queued'].includes(t.state)).map(t => t.name);
+  $('working').hidden = !waiting && !busy.length;
+  $('what').textContent = waiting ? '· finding where this goes' : `· ${busy.slice(0, 3).join(', ')}${busy.length > 3 ? ` +${busy.length - 3}` : ''}`;
+}
+setInterval(() => {
+  if ($('working').hidden) return;
+  tick++;
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) $('glyph').textContent = GLYPHS[tick % GLYPHS.length];
+  if (tick % 20 === 0) $('verb').textContent = VERBS[Math.floor(Math.random() * VERBS.length)] + '…';
+}, 120);
+
 async function poll() {
   try {
     const r = await (await fetch('/api/one?after=' + last)).json();
@@ -217,7 +240,8 @@ async function poll() {
       $('stream').scrollTop = $('stream').scrollHeight;
       if (openK && r.stream.some(s => s.thread === openK)) openThread(openK);
     }
-    chips(); needs();
+    for (const x of r.stream) { if (x.kind === 'you') seenYou[x.id] = x.at; if (x.re) answered.add(x.re) }
+    chips(); needs(); working();
   } catch {}
 }
 setInterval(poll, 1500);
@@ -226,7 +250,7 @@ async function openThread(k) {
   openK = k;
   const {thread: t, turns} = await (await fetch('/api/one/thread/' + k)).json();
   $('pTitle').textContent = t.name;
-  $('pMeta').textContent = `${{done: 'Done', failed: 'Failed', needs: 'Waiting on you'}[t.state] || 'Working'}${t.closed ? ' · closed' : ''} · ~/dev/${t.folder} on your Mac`;
+  $('pMeta').textContent = `${{done: 'Done', failed: 'Failed', needs: 'Waiting on you'}[t.state] || 'Working'}${t.closed ? ' · closed' : ''} · ${t.folder.startsWith('/') ? t.folder.replace(/^\/Users\/[^/]+/, '~') : '~/dev/' + t.folder} on your Mac`;
   $('pActions').innerHTML = `<button class="btn primary" data-reply="${k}">Reply</button>` +
     (!t.closed && ['done', 'failed'].includes(t.state) ? `<button class="btn" data-close="${k}">Looks good, close thread</button><button class="btn" data-wrong="${k}">Not right</button>` : '');
   $('pBody').innerHTML = turns.length ? turns.map(bubble).join('') : '<p class="tools">Working… its conversation shows here once it has one.</p>';
@@ -253,6 +277,8 @@ document.body.addEventListener('click', async e => {
   // a click anywhere outside the open panel closes it (the Quote button belongs to the panel's selection)
   if ($('panel').classList.contains('open') && !$('panel').contains(e.target) && e.target.id !== 'quoteBtn' && !getSelection().toString().trim()) { $('panel').classList.remove('open'); openK = null }
   const c = e.target.closest('[data-close]'); if (c) { await fetch(`/api/one/thread/${c.dataset.close}/close`, {method: 'POST'}); $('panel').classList.remove('open'); openK = null; return poll() }
+  const rv = e.target.closest('[data-revive]');
+  if (rv) { const p = JSON.parse(rv.dataset.revive); await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `Reopen "${p.title}"`, revive: p})}); setTimeout(poll, 150); return }
   const an = e.target.closest('[data-answer]'); if (an) { const t = threads[an.dataset.answer]; quote = {thread: t.id, from: t.name, text: t.ask}; drawQuote(); $('input').focus(); return }
   const rp = e.target.closest('[data-reply]'); if (rp) { quote = {thread: rp.dataset.reply, from: name(rp.dataset.reply), text: ''}; drawQuote(); $('input').focus(); return }
   const w = e.target.closest('[data-wrong]'); if (w) { quote = {thread: w.dataset.wrong, from: name(w.dataset.wrong), text: 'Not right:'}; drawQuote(); $('panel').classList.remove('open'); $('input').focus(); return }

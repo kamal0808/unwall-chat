@@ -49,7 +49,7 @@ def save_thread(t, log=None):
     call("/api/relay/thread", {"thread": t, "log": log or []}, timeout=30)
 
 
-def claude(prompt, cwd, model, resume=None, append=None, tools=True):
+def claude(prompt, cwd, model, resume=None, append=None, tools=True, fork=False):
     cwd = cwd if os.path.isdir(cwd) else os.path.join(DEV, "topc")
     env = dict(os.environ, PATH=f"{HOME}/.local/bin:/opt/homebrew/bin:/usr/bin:/bin", UNWALL_RELAY="1")
     top = os.path.relpath(cwd, DEV).split(os.sep)[0]
@@ -61,7 +61,7 @@ def claude(prompt, cwd, model, resume=None, append=None, tools=True):
     if append:
         cmd += ["--append-system-prompt", append]
     if resume:
-        cmd += ["--resume", resume]
+        cmd += ["--resume", resume] + (["--fork-session"] if fork else [])
     if not tools:
         cmd += ["--tools", ""]
     p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=1800)
@@ -186,8 +186,10 @@ def run_thread(job, t, text):
     with LOCKS.setdefault(t["id"], threading.Lock()):  # one message at a time per thread
         t.update(state="working", last=text[:80]); save_thread(t)
         try:
-            out, sid = claude(text, os.path.join(DEV, t["folder"]), MODELS[job["settings"]["threads"]], t.get("sessionId"), RECEIPT)
-            t["sessionId"] = t.get("sessionId") or sid
+            # a reopened desktop session is forked, so the app's own copy stays as it was
+            fork = t.pop("fork", False)
+            out, sid = claude(text, os.path.join(DEV, t["folder"]), MODELS[job["settings"]["threads"]], t.get("sessionId"), RECEIPT, fork=fork)
+            t["sessionId"] = sid if fork else (t.get("sessionId") or sid)
             asked = (m.group(1).strip() if (m := re.search(r"^ASK:\s*([\s\S]+)$", out, re.M)) else None)
             receipt = (m.group(1) if (m := re.search(r"^RECEIPT:\s*([\s\S]+)$", out, re.M)) else out.strip().split("\n\n")[-1]).strip()[:500]
             t.update(receipt=receipt, ask=asked[:400] if asked else None, state="needs" if asked else "done")
@@ -203,6 +205,13 @@ def run_thread(job, t, text):
 
 def handle(job):
     try:
+        if job.get("revive"):
+            p = job["revive"]
+            t = {"id": f"{int(time.time() * 1000):x}", "name": p["title"][:60], "folder": p["cwd"] or os.path.join(DEV, "topc"),
+                 "state": "queued", "sessionId": p["cli"], "fork": True}
+            save_thread(t)
+            event(kind="ack", thread=t["id"], fresh=True, re=job["re"])
+            return run_thread(job, t, "Kamal reopened this conversation from Unwall. In at most 3 lines: where it was left, and what is next.")
         r = route(job)
         if r["go"] == "answer":
             return answer(job)
@@ -214,7 +223,7 @@ def handle(job):
         reopened = bool(t.get("closed"))
         t.update(closed=False, ask=None)
         save_thread(t)
-        event(kind="ack", thread=t["id"], fresh=fresh, reopened=reopened)
+        event(kind="ack", thread=t["id"], fresh=fresh, reopened=reopened, re=job["re"])
         run_thread(job, t, job["text"])
     except Exception as e:  # never leave a message without a reply in the stream
         try:
