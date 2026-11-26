@@ -44,10 +44,13 @@ h1 small { font: 12px system-ui; color: var(--muted); margin-left: 8px; }
 .ack { align-self: flex-start; font-size: 13px; color: var(--muted); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .ack b { color: var(--ink); font-weight: 500; }
 .link { border: 0; background: none; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; padding: 6px 2px; }
-.receipt { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 12px; padding: 10px 14px; font: inherit; cursor: pointer; min-height: 44px; }
+.receipt { display: flex; align-items: flex-start; gap: 10px; text-align: left; width: 100%; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 12px; padding: 10px 14px; font: inherit; cursor: pointer; min-height: 44px; }
 .receipt:hover { border-color: var(--muted); }
 .receipt .t { font-weight: 500; white-space: nowrap; }
-.receipt .o { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.receipt .o { color: var(--muted); flex: 1; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
+.re { font-size: 12px; color: var(--muted); margin: 0 0 2px; }
+.past { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.past a { font-size: 12px; }
 .receipt .open { color: var(--accent); font-size: 13px; white-space: nowrap; }
 .batch-items { display: none; flex-direction: column; gap: 8px; padding-left: 14px; border-left: 2px solid var(--line); }
 .batch.open + .batch-items { display: flex; }
@@ -150,18 +153,30 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 const md = t => DOMPurify.sanitize(marked.parse(t || ''));
 let threads = {}, last = 0, openK = null, quote = null;
+const said = {}; // id -> your message, so a late answer can say what it answers
 
 const name = id => threads[id]?.name || 'thread';
 const bubble = t => t.role === 'user'
   ? `<div class="you">${esc(t.text)}</div>`
-  : `<div class="claude">${t.tools?.length ? `<p class="tools">Used ${t.tools.length} tools: ${esc([...new Set(t.tools)].join(', '))}</p>` : ''}${md(t.text.replace(/^RECEIPT:.*$/m, ''))}</div>`;
+  : `<div class="claude">${t.tools?.length ? `<p class="tools">Used ${t.tools.length} tools: ${esc([...new Set(t.tools)].join(', '))}</p>` : ''}${md(t.text.replace(/^(RECEIPT|ASK):\s*/m, '**$1:** '))}</div>`;
 function item(s) {
-  if (s.kind === 'you') return `<div class="you">${esc(s.text)}</div>`;
-  if (s.kind === 'claude') return `<div class="claude">${md(s.text)}</div>`;
-  if (s.kind === 'ack') return `<div class="ack">On it → <b>${esc(name(s.thread))}</b>${s.fresh ? ' (new thread)' : ''}</div>`;
+  if (s.kind === 'you') { said[s.id] = s.text; return `<div class="you">${esc(s.text)}</div>` }
+  if (s.kind === 'claude') {
+    const re = s.re && s.re !== lastId && said[s.re] ? `<p class="re">↳ re: “${esc(said[s.re].slice(0, 90))}${said[s.re].length > 90 ? '…' : ''}”</p>` : '';
+    const past = (s.sessions || []).map(p => `<a class="btn" href="/?${new URLSearchParams({s: p.cli, cwd: p.cwd, title: p.title})}" target="_blank" rel="noopener">${esc(p.title)} · ${new Date(p.active).toLocaleDateString(undefined, {day: 'numeric', month: 'short'})}</a>`).join('');
+    return `<div class="claude">${re}${md(s.text)}${past ? `<div class="past">${past}</div>` : ''}</div>`;
+  }
+  if (s.kind === 'ask') return `<div class="ack">Needs you → <b>${esc(name(s.thread))}</b> (question above the box)</div>`;
+  if (s.kind === 'ack') return `<div class="ack">${s.reopened ? 'Reopened' : 'On it'} → <b>${esc(name(s.thread))}</b>${s.fresh ? ' (new thread)' : ''}</div>`;
   if (s.kind === 'closed') return `<div class="ack">Closed → <b>${esc(name(s.thread))}</b></div>`;
   if (s.kind === 'receipt') return `<button class="receipt" data-open="${s.thread}"><span class="dot ${s.failed ? '' : 'ok'}"${s.failed ? ' style="background:#c0392b"' : ''}></span><span class="t">${esc(name(s.thread))}</span><span class="o">${esc(s.text)}</span><span class="open">Read</span></button>`;
   return '';
+}
+let lastId = 0;
+function needs() {
+  const asks = Object.values(threads).filter(t => t.state === 'needs' && t.ask && !t.closed);
+  $('needs').style.display = asks.length ? '' : 'none';
+  $('asks').innerHTML = asks.map(t => `<div class="ask"><p><b>${esc(t.name)}:</b> ${esc(t.ask)}</p><button class="btn" data-open="${t.id}">Read</button><button class="btn primary" data-answer="${t.id}">Answer</button></div>`).join('');
 }
 function chips() {
   $('chips').innerHTML = Object.values(threads).filter(t => !t.closed && ['working', 'queued'].includes(t.state)).map(t =>
@@ -174,12 +189,12 @@ async function poll() {
     if (document.activeElement !== $('mMain')) $('mMain').value = r.settings.main;
     if (document.activeElement !== $('mBg')) $('mBg').value = r.settings.threads;
     if (r.stream.length) {
-      $('stream').insertAdjacentHTML('beforeend', r.stream.map(item).join(''));
+      $('stream').insertAdjacentHTML('beforeend', r.stream.map(x => { const h = item(x); lastId = x.id; return h }).join(''));
       last = r.stream.at(-1).id;
       $('stream').scrollTop = $('stream').scrollHeight;
       if (openK && r.stream.some(s => s.thread === openK)) openThread(openK);
     }
-    chips();
+    chips(); needs();
   } catch {}
 }
 setInterval(poll, 1500);
@@ -188,7 +203,7 @@ async function openThread(k) {
   openK = k;
   const {thread: t, turns} = await (await fetch('/api/one/thread/' + k)).json();
   $('pTitle').textContent = t.name;
-  $('pMeta').textContent = `${t.state === 'done' ? 'Done' : t.state === 'failed' ? 'Failed' : 'Working'} · ~/dev/${t.folder}`;
+  $('pMeta').textContent = `${{done: 'Done', failed: 'Failed', needs: 'Waiting on you'}[t.state] || 'Working'}${t.closed ? ' · closed' : ''} · ~/dev/${t.folder}`;
   $('pActions').innerHTML = !t.closed && ['done', 'failed'].includes(t.state) ? `<button class="btn primary" data-close="${k}">Looks good, close thread</button><button class="btn" data-wrong="${k}">Not right</button>` : '';
   $('pBody').innerHTML = turns.length ? turns.map(bubble).join('') : '<p class="tools">Working… its conversation shows here once it has one.</p>';
   $('panel').classList.add('open');
@@ -210,6 +225,7 @@ $('input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventD
 document.body.addEventListener('click', async e => {
   const o = e.target.closest('[data-open]'); if (o) return openThread(o.dataset.open);
   const c = e.target.closest('[data-close]'); if (c) { await fetch(`/api/one/thread/${c.dataset.close}/close`, {method: 'POST'}); $('panel').classList.remove('open'); openK = null; return poll() }
+  const an = e.target.closest('[data-answer]'); if (an) { const t = threads[an.dataset.answer]; quote = {thread: t.id, from: t.name, text: t.ask}; drawQuote(); $('input').focus(); return }
   const w = e.target.closest('[data-wrong]'); if (w) { quote = {thread: w.dataset.wrong, from: name(w.dataset.wrong), text: 'Not right:'}; drawQuote(); $('panel').classList.remove('open'); $('input').focus(); return }
   if (e.target.id === 'unquote') { quote = null; drawQuote(); return }
   if (e.target.id === 'quoteBtn') {
