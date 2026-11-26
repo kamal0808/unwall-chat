@@ -164,7 +164,11 @@ const KEY = (() => {
 })();
 const rawFetch = window.fetch.bind(window);
 window.fetch = (u, o = {}) => rawFetch(u, {...o, headers: {...(o.headers || {}), authorization: `Bearer ${KEY}`}}).then(r => {
-  if (r.status === 401) document.body.innerHTML = '<p style="padding:40px;font:16px system-ui">Locked. Open Unwall with your key link once on this device.</p>';
+  if (r.status === 401 && !document.getElementById('keyForm')) {
+    document.body.innerHTML = '<form id="keyForm" style="max-width:420px;margin:80px auto;padding:0 16px;font:16px system-ui;display:flex;flex-direction:column;gap:12px"><b>Unwall is locked</b><label for="keyIn">Paste your Unwall key (it is in your clipboard, and in Keychain as "Unwall key")</label><input id="keyIn" type="password" autocomplete="off" style="font:inherit;padding:10px;border-radius:10px;border:1px solid #888"><button class="btn primary" style="min-height:44px">Unlock</button></form>';
+    document.getElementById('keyForm').onsubmit = e => { e.preventDefault(); try { localStorage.setItem('unwall-key', document.getElementById('keyIn').value.trim()) } catch {} location.reload() };
+    document.getElementById('keyIn').focus();
+  }
   return r;
 });
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
