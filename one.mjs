@@ -61,16 +61,28 @@ async function folders() {
 async function route(text) {
   const all = Object.values(state.threads), open = all.filter(t => !t.closed), shut = all.filter(t => t.closed).slice(-5);
   const line = t => `- id ${t.id}: "${t.name}" in ~/dev/${t.folder}, ${t.closed ? 'closed' : t.state}: ${(t.ask || t.receipt || t.last || '').slice(0, 160)}`;
-  const prompt = `You route Kamal's messages. Read the recent conversation first: a message that says "it", "that" or names no project usually continues what was just discussed.\n\nRecent conversation:\n${recent()}\n\n` +
+  const prompt = `You route Kamal's messages. Send a message to a thread only when it is about that thread's own subject; use the recent conversation to tell what "it" or "that" means. ` +
+    `Questions about the overall picture (what is running, how many sessions or threads, what is waiting, what was decided, where something was left) are answers, even right after a thread's work.\n\nRecent conversation:\n${recent()}\n\n` +
     `Threads:\n${open.map(line).join('\n') || '(none open)'}\n${shut.map(line).join('\n')}\n\nProject folders in ~/dev: ${(await folders()).join(', ')}\n\nKamal's new message:\n"""${text}"""\n\n` +
     `Reply with JSON only, one of:\n{"go":"thread","id":"<thread id>"} when it continues a thread's work (a closed one gets reopened)\n` +
     `{"go":"new","name":"<2-4 word topic>","folder":"<one folder from the list, or topc if none fits>"} for work on a new topic\n` +
-    `{"go":"answer"} for a quick question about what was decided or how things stand, which needs no work done`;
+    `{"go":"answer"} for a question about the overall picture or about what was decided or where something stands, which needs no work in a project`;
   const {out} = await ask(prompt, {model: MODELS[state.settings.main], tools: [], maxTurns: 1});
   const r = JSON.parse(out.match(/\{[\s\S]*\}/)?.[0] || '{}');
   if (r.go === 'thread' && state.threads[r.id]) return r;
   if (r.go === 'answer') return r;
   return {go: 'new', name: r.name || text.split(/\s+/).slice(0, 4).join(' '), folder: r.folder || 'topc'};
+}
+
+// the whole picture: this box's threads and the desktop app's sessions
+async function overview() {
+  const list = JSON.parse(await readFile(`${DIR}/sessions.json`, 'utf8').catch(() => '[]'));
+  const day = Date.now() - 864e5, hour = Date.now() - 36e5;
+  const live = list.filter(s => !s.archived && s.active > day);
+  const synced = list.length ? new Date(Math.max(...list.map(s => s.active))).toLocaleString('en-IN') : 'never';
+  const threads = Object.values(state.threads).map(t => `- "${t.name}" (~/dev/${t.folder}): ${t.closed ? 'closed' : t.state}${t.ask ? `, asking: ${t.ask.slice(0, 120)}` : ''}${t.receipt ? `, last: ${t.receipt.slice(0, 120)}` : ''}`).join('\n') || '(none)';
+  return `Threads in this box:\n${threads}\n\nClaude desktop sessions (list last synced from the Air at ${synced}): ${list.length} total, ${list.filter(s => s.archived).length} archived, ${live.length} not archived and active in the last 24 hours, ${list.filter(s => !s.archived && s.active > hour).length} in the last hour. Those active in the last 24 hours, newest first:\n` +
+    live.sort((a, b) => b.active - a.active).slice(0, 25).map(s => `- "${s.title}" (~/${s.cwd.split('/').slice(3).join('/')}, ${new Date(s.active).toLocaleString('en-IN', {hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short'})})`).join('\n');
 }
 
 async function answer(text, re) {
@@ -80,8 +92,8 @@ async function answer(text, re) {
     return `Session "${s.title}" (${new Date(s.active).toDateString()}, ~/${s.cwd.split('/').slice(3).join('/')})${w ? `, how it ended:\n${w}` : ', not synced here, title only'}`;
   }))).join('\n\n');
   const prompt = `Answer Kamal in plain words, at most 5 short lines. Give the answer itself first, then where it came from.\n` +
-    `Sources, in order: the past conversations below (his own Claude sessions), then the TOPC brain (Basic Memory, project "topc"). If neither has it, say so in one line.\n\n` +
-    `Recent conversation here:\n${recent()}\n\nPast conversations whose titles match:\n${notes || '(none)'}\n\nKamal's question: ${text}`;
+    `Sources, in order: the whole picture below (threads here and his Claude desktop sessions), the past conversations below, then the TOPC brain (Basic Memory, project "topc"). If neither has it, say so in one line.\n\n` +
+    `The whole picture right now:\n${await overview()}\n\nRecent conversation here:\n${recent()}\n\nPast conversations whose titles match:\n${notes || '(none)'}\n\nKamal's question: ${text}`;
   const {out} = await ask(prompt, {model: MODELS[state.settings.main], mcpServers: BRAIN, allowedTools: ['mcp__basic-memory__bm_search', 'mcp__basic-memory__bm_read'], tools: [], maxTurns: 6});
   await push({kind: 'claude', text: out.trim(), re, sessions: past.slice(0, 3).map(s => ({title: s.title, cli: s.cli, cwd: s.cwd, active: s.active}))});
 }
