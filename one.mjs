@@ -91,7 +91,7 @@ async function run(t, text) {
   try {
     const {out, sessionId} = await ask(text, {
       cwd: `${homedir()}/dev/${t.folder}`, resume: t.sessionId || undefined, model: MODELS[state.settings.threads],
-      systemPrompt: {type: 'preset', preset: 'claude_code', append: RECEIPT}, permissionMode: 'auto',
+      systemPrompt: {type: 'preset', preset: 'claude_code', append: RECEIPT, snapshot: false}, permissionMode: 'auto',
       // shortcut: anything that would need Kamal's yes is refused until the approve buttons exist (next task)
       canUseTool: async () => ({behavior: 'deny', message: 'Unwall cannot ask Kamal for approval yet, so this was not allowed. Say so in your receipt.'}),
     });
