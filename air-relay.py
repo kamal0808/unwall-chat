@@ -49,6 +49,8 @@ def guidance(job):
             (f"Kamal has already said yes, always, to these; do them without asking again:\n{perms}\n\n" if perms else "") +
             "Don't give up when one way fails: try other routes (other tools, the CLI, the mini's browser, past sessions, the brain) "
             "until the result he wants is reached, carefully, and only stop for a yes on something outward or risky.\n"
+            "You are a thread inside Kamal's one-box chat app (Unwall). Its own code is ~/dev/unwall-chat; when Kamal asks to change "
+            "you, the box, its page, design or behaviour, read ~/dev/unwall-chat/AGENTS.md and change that code, then deploy it as it says.\n"
             "Use the skill made for the work before doing it: public copy and posts go through topc-marketing and the CMO flow, "
             "co-founders and distribution through founderbot, buying through shop, TOPC work through topc-task-first; read a site's "
             "rules before posting there.")
@@ -188,7 +190,7 @@ def route(job):
               "conversation to tell what \"it\" or \"that\" means. Questions about the overall picture (what is running, how many sessions "
               "or threads, what is waiting, what was decided, where something was left) are answers, even right after a thread's work.\n\n"
               f"Recent conversation:\n{recent(job)}\n\nThreads:\n" + ("\n".join(map(line, job["threads"][-15:])) or "(none)") +
-              f"\n\nProject folders in ~/dev: {folders}\n\nKamal's new message:\n\"\"\"{job['text']}\"\"\"\n\n"
+              f"\n\nProject folders in ~/dev: {folders}\nThis box itself (its page, design, bubble, behaviour) is the folder unwall-chat.\n\nKamal's new message:\n\"\"\"{job['text']}\"\"\"\n\n"
               'Reply with JSON only, one of:\n{"go":"thread","id":"<thread id>"} when it continues a thread\'s work (a closed one gets reopened)\n'
               '{"go":"new","name":"<2-4 word topic>","folder":"<one folder from the list, or topc if none fits>"} for work on a new topic\n'
               '{"go":"answer"} for a question about the overall picture or about what was decided or where something stands, which needs no work in a project')
