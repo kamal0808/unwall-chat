@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>All sessions · Unwall Chat</title>
+<style>
+:root {
+  --bg: #f6f4ee; --side: #efece3; --ink: #1f1e1b; --muted: #77736a; --line: #e2ded2; --bubble: #e9e5da; --card: #fbfaf6; --accent: #c96442;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #1f1e1c; --side: #191917; --ink: #ece9e1; --muted: #9b968b; --line: #2f2e2a; --bubble: #2b2a26; --card: #262522; }
+}
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 Geist, system-ui, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 28px 16px 60px; }
+h1 { font: 500 24px/1.2 Georgia, serif; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 0 0 18px; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+input[type=search] { flex: 1; min-width: 200px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 9px 12px; font: inherit; }
+.chip { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 4px 11px; font: inherit; font-size: 13px; cursor: pointer; }
+.chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.chip small { color: inherit; opacity: .6; margin-left: 4px; }
+.folders { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 18px; }
+ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+li { cursor: pointer; display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 9px 4px; border-bottom: 1px solid var(--line); }
+.title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag { font-size: 12px; color: var(--muted); background: var(--bubble); border-radius: 6px; padding: 1px 7px; white-space: nowrap; }
+.tag.arch { background: none; border: 1px solid var(--line); }
+.when { font-size: 13px; color: var(--muted); white-space: nowrap; min-width: 74px; text-align: right; }
+.sub-mark { color: var(--muted); margin-right: 6px; }
+.kids { font-size: 12px; color: var(--muted); }
+li:hover { background: var(--bubble); }
+.empty { color: var(--muted); padding: 30px 0; text-align: center; }
+@media (max-width: 600px) { li { grid-template-columns: 1fr auto; } .when { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>All sessions</h1>
+  <p class="sub" id="sub">Loading…</p>
+  <div class="bar">
+    <input type="search" id="q" placeholder="Search titles" autofocus>
+    <button class="chip" data-state="all">All</button>
+    <button class="chip on" data-state="open">Not archived</button>
+    <button class="chip" data-state="archived">Archived</button>
+  </div>
+  <div class="folders" id="folders"></div>
+  <ul id="list"></ul>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const folderOf = cwd => cwd.split('/').filter(Boolean).pop() || '~';
+const ago = t => {
+  const d = (Date.now() - t) / 864e5;
+  if (d < 1) return 'today';
+  if (d < 2) return 'yesterday';
+  if (d < 30) return `${Math.floor(d)}d ago`;
+  return new Date(t).toLocaleDateString(undefined, {day: 'numeric', month: 'short'});
+};
+const esc = s => s.replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+
+let all = [], state = 'open', folder = null;
+const open_ = (cli, cwd, title) => { if (cli) location.href = '/?' + new URLSearchParams({s: cli, cwd, title}) };
+
+function draw() {
+  const q = $('q').value.trim().toLowerCase();
+  const byState = all.filter(s => state === 'all' || (state === 'archived') === s.archived);
+  const counts = {};
+  for (const s of byState) counts[s.folder] = (counts[s.folder] || 0) + 1;
+  $('folders').innerHTML = Object.entries(counts).sort((a, b) => b[1] - a[1])
+    .map(([f, n]) => `<button class="chip${f === folder ? ' on' : ''}" data-folder="${esc(f)}">${esc(f)}<small>${n}</small></button>`).join('');
+  const shown = byState.filter(s => (!folder || s.folder === folder) && (!q || s.title.toLowerCase().includes(q)));
+  // sub-sessions go right under their parent; one whose parent is filtered out stays at top level
+  const ids = new Set(shown.map(s => s.id)), kids = {}, rows = [];
+  for (const s of shown) if (ids.has(s.parent)) (kids[s.parent] ||= []).push(s);
+  const walk = (s, depth) => { rows.push([s, depth]); for (const k of kids[s.id] || []) walk(k, depth + 1) };
+  for (const s of shown) if (!ids.has(s.parent)) walk(s, 0);
+  $('list').innerHTML = rows.map(([s, depth]) => `<li title="${esc(s.cwd)}" onclick="open_(${esc(JSON.stringify(s.cli))}, ${esc(JSON.stringify(s.cwd))}, ${esc(JSON.stringify(s.title))})">
+    <span class="title" style="padding-left:${depth * 22}px">${depth ? '<span class="sub-mark">↳</span>' : ''}${esc(s.title)}${kids[s.id] ? ` <small class="kids">${kids[s.id].length}</small>` : ''}</span>
+    <span>${s.archived ? '<span class="tag arch">archived</span> ' : ''}<span class="tag">${esc(s.folder)}</span></span>
+    <span class="when">${ago(s.active)}</span></li>`).join('') || '<li class="empty">No sessions match.</li>';
+  $('sub').textContent = `${shown.length} of ${all.length} sessions · ${all.filter(s => s.archived).length} archived`;
+}
+
+document.querySelectorAll('[data-state]').forEach(b => b.onclick = () => {
+  state = b.dataset.state; folder = null;
+  document.querySelectorAll('[data-state]').forEach(x => x.classList.toggle('on', x === b));
+  draw();
+});
+$('folders').onclick = e => {
+  const b = e.target.closest('[data-folder]');
+  if (!b) return;
+  folder = folder === b.dataset.folder ? null : b.dataset.folder;
+  draw();
+};
+$('q').oninput = draw;
+
+fetch('/api/sessions').then(r => r.json()).then(list => {
+  all = list.map(s => ({...s, folder: folderOf(s.cwd)}));
+  if (!all.length) $('sub').textContent = 'No sessions yet: run export-sessions.py on the Mac with the Claude app.';
+  draw();
+});
+</script>
+</body>
+</html>

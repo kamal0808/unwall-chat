@@ -1,40 +1,21 @@
 import {createServer} from 'node:http';
-import {readFile} from 'node:fs/promises';
+import {readFile, mkdir} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {query, listSessions, getSessionMessages} from '@anthropic-ai/claude-agent-sdk';
+import {one, turns} from './one.mjs';
 
 const PORT = Number(process.env.PORT || 4321);
 // bind to one address (the Tailscale IP on the mini): this server runs an agent on the machine, so never expose it on the LAN
 const HOST = process.env.HOST || '127.0.0.1';
 const CWD = process.env.CWD || homedir();
-const STATIC = {'/': 'index.html', '/unwall.html': 'unwall.html'};
-
-// one Claude turn = the tools it used plus everything it said
-function turns(messages) {
-  const out = [];
-  for (const m of messages) {
-    if (m.parent_tool_use_id) continue;
-    const c = m.message?.content;
-    if (m.type === 'user') {
-      const text = typeof c === 'string' ? c : (c || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-      if (text && !text.startsWith('<')) out.push({role: 'user', text});
-      continue;
-    }
-    if (m.type !== 'assistant' || !Array.isArray(c)) continue;
-    let t = out.at(-1);
-    if (t?.role !== 'claude') out.push(t = {role: 'claude', text: '', tools: []});
-    for (const b of c) {
-      if (b.type === 'text') t.text += (t.text ? '\n\n' : '') + b.text;
-      if (b.type === 'tool_use') t.tools.push(b.name);
-    }
-  }
-  return out;
-}
+const STATIC = {'/': 'index.html', '/unwall.html': 'unwall.html', '/sessions': 'sessions.html', '/home': 'home.html', '/mock': 'mock.html'};
+// written by export-sessions.py on the Mac that has the Claude desktop app
+const SESSIONS_FILE = process.env.SESSIONS_FILE || `${homedir()}/.unwall/sessions.json`;
 
 async function send(req, res) {
   let body = '';
   for await (const chunk of req) body += chunk;
-  const {text, sessionId} = JSON.parse(body || '{}');
+  const {text, sessionId, cwd} = JSON.parse(body || '{}');
   if (typeof text !== 'string' || !text.trim()) return json(res, 400, {error: 'empty message'});
   res.writeHead(200, {'content-type': 'application/x-ndjson', 'cache-control': 'no-store'});
   const line = o => res.write(JSON.stringify(o) + '\n');
@@ -42,7 +23,7 @@ async function send(req, res) {
   res.on('close', () => ac.abort());
   try {
     for await (const m of query({prompt: text, options: {
-      cwd: CWD, resume: sessionId || undefined, includePartialMessages: true, abortController: ac,
+      cwd: await folder(cwd), resume: sessionId || undefined, includePartialMessages: true, abortController: ac,
       settingSources: ['user', 'project', 'local'], permissionMode: 'auto',
       // shortcut: anything auto mode would ask about is denied, until the page can show approve/deny buttons
       canUseTool: async () => ({behavior: 'deny', message: 'Unwall Chat cannot ask for approval yet, so this was not allowed.'}),
@@ -61,6 +42,9 @@ async function send(req, res) {
   res.end();
 }
 
+// a session resumes in its own folder; one that only exists on the other Mac (a worktree) gets an empty stand-in
+const folder = async cwd => { if (!cwd) return CWD; await mkdir(cwd, {recursive: true}); return cwd };
+
 const json = (res, code, o) => { res.writeHead(code, {'content-type': 'application/json'}); res.end(JSON.stringify(o)) };
 
 createServer(async (req, res) => {
@@ -70,12 +54,21 @@ createServer(async (req, res) => {
       res.writeHead(200, {'content-type': 'text/html; charset=utf-8'});
       return res.end(await readFile(new URL(STATIC[url.pathname], import.meta.url)));
     }
+    if (/^\/api\/(one|air)/.test(url.pathname) && await one(req, res, url) !== false) return;
     if (url.pathname === '/api/chats') {
       const list = await listSessions({dir: CWD, limit: 40});
       return json(res, 200, list.map(s => ({id: s.sessionId, title: s.customTitle || s.summary || s.firstPrompt || 'Untitled', at: s.lastModified})));
     }
+    if (url.pathname === '/api/sessions') {
+      res.writeHead(200, {'content-type': 'application/json', 'cache-control': 'no-store'});
+      return res.end(await readFile(SESSIONS_FILE).catch(() => '[]'));
+    }
     const m = url.pathname.match(/^\/api\/chats\/([\w-]+)$/);
-    if (m) return json(res, 200, turns(await getSessionMessages(m[1], {dir: CWD})));
+    if (m) {
+      const list = await getSessionMessages(m[1], {dir: url.searchParams.get('cwd') || CWD}).catch(() => []);
+      if (!list.length) return json(res, 404, {error: 'This session is not on this machine yet. Run sync-sessions.sh on the Mac that has it.'});
+      return json(res, 200, turns(list));
+    }
     if (url.pathname === '/api/send' && req.method === 'POST') return send(req, res);
     json(res, 404, {error: 'not found'});
   } catch (e) {
