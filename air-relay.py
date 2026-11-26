@@ -21,6 +21,25 @@ RECEIPT = """Kamal reads only the last part of your reply, so end it in one of t
 - "ASK: " followed by one question, only when you truly cannot go on without him: you need his yes for something risky or outward (sending, posting, paying, deleting), or the answer exists nowhere you can look. Never ask what you can find out yourself from files, tools, the TOPC brain or past sessions; decide, say what you assumed, and finish the work."""
 
 
+RAMU_RECALL = ("ssh mini 'cd ~/dev/ramu-kaka && python3 -c \"import ramu_memory,sys; print(ramu_memory.recall(sys.argv[1], "
+               "\\\"/Users/kamal/dev/ramu-kaka/memory\\\", budget_tokens=900, touch=False))\" \"<what to look up>\"'")
+
+
+def side(t):
+    """Personal threads live in Ramu's folder; everything else is work."""
+    return "personal" if "ramu-kaka" in (t or {}).get("folder", "") else "work"
+
+
+def goals_rule(t):
+    if side(t) == "personal":
+        own, other = f"Ramu's brain (run: {RAMU_RECALL})", "work"
+    else:
+        own, other = "the TOPC brain (Basic Memory projects topc and kamal-career)", "personal"
+    return (f"\n\nThis is a {side(t)} thread. Before deciding, look up the goals of Kamal's that matter for this task in {own}. "
+            f"Never read the {other} side's brain yourself: personal and work goals are walled off. If his {other} goals matter here, "
+            f"end your reply with one line \"CROSS: <what to look up> | <why it matters here>\" and stop; he decides each time.")
+
+
 def guidance(job):
     """What every thread works by: Kamal's goals, what he has already said yes to, and how hard to try."""
     st = job["settings"]
@@ -219,9 +238,13 @@ def run_thread(job, t, text):
         try:
             # a reopened desktop session is forked, so the app's own copy stays as it was
             fork = t.pop("fork", False)
-            out, sid = claude(text, os.path.join(DEV, t["folder"]), MODELS[job["settings"]["threads"]], t.get("sessionId"), RECEIPT + guidance(job), fork=fork, tid=t["id"])
+            out, sid = claude(text, os.path.join(DEV, t["folder"]), MODELS[job["settings"]["threads"]], t.get("sessionId"), RECEIPT + guidance(job) + goals_rule(t), fork=fork, tid=t["id"])
             t["sessionId"] = sid if fork else (t.get("sessionId") or sid)
             asked = (m.group(1).strip() if (m := re.search(r"^ASK:\s*([\s\S]+)$", out, re.M)) else None)
+            if (m := re.search(r"^CROSS:\s*(.+?)\s*\|\s*(.+)$", out, re.M)):
+                other = "work" if side(t) == "personal" else "personal"
+                t["cross"] = {"query": m.group(1).strip()[:200], "why": m.group(2).strip()[:300], "to": other}
+                asked = f"Wants to look at your {other} goals about \"{t['cross']['query']}\": {t['cross']['why']}"
             receipt = (m.group(1) if (m := re.search(r"^RECEIPT:\s*([\s\S]+)$", out, re.M)) else out.strip().split("\n\n")[-1]).strip()[:500]
             t.update(receipt=receipt, ask=asked[:400] if asked else None, state="needs" if asked else "done")
         except Exception as e:
@@ -229,7 +252,7 @@ def run_thread(job, t, text):
             t.update(state="failed", ask=None, receipt=f"failed: {str(e)[:120]}")
         save_thread(t, [{"role": "user", "text": text}, {"role": "claude", "text": out}] if out else [{"role": "user", "text": text}])
         if t.get("ask"):
-            event(kind="ask", thread=t["id"], text=t["ask"])
+            event(kind="cross" if t.get("cross") else "ask", thread=t["id"], text=t["ask"])
         else:
             event(kind="receipt", thread=t["id"], text=t["receipt"], failed=t["state"] == "failed")
 
@@ -251,6 +274,28 @@ def history(cli):
         if text and not text.startswith("<"):
             turns.append({"role": "user" if r["type"] == "user" else "claude", "text": text[:3000]})
     return turns[-30:]
+
+
+def look_up(to, query):
+    """The one door between the walled-off brains, opened only on Kamal's Allow once."""
+    if to == "personal":
+        p = subprocess.run(["ssh", "mini", "cd ~/dev/ramu-kaka && python3 -c 'import ramu_memory,sys; print(ramu_memory.recall(sys.argv[1], "
+                            "\"/Users/kamal/dev/ramu-kaka/memory\", budget_tokens=900, touch=False))' " + json.dumps(query + " goals")],
+                           capture_output=True, text=True, timeout=120)
+        return p.stdout.strip()
+    out, _ = claude(f"Search the TOPC brain (Basic Memory, projects topc and kamal-career) for Kamal's work goals about: {query}. "
+                    "Reply with only the matching goals and decisions, one per line, with their dates.", os.path.join(DEV, "topc"), "haiku")
+    return out.strip()
+
+
+def crossing(job, t):
+    """Kamal's Allow once or No on a thread's CROSS request, turned into the thread's next message."""
+    c, t["cross"] = t.get("cross") or {}, None  # explicit None: the box merges thread fields
+    if job.get("cross") != "allow" or not c:
+        return f"Kamal said no to looking at his {c.get('to', 'other')} goals. Go on without them."
+    found = look_up(c["to"], c["query"]) or "(nothing found)"
+    return (f"Kamal allowed this once. His {c['to']} goals about \"{c['query']}\":\n{found}\n\n"
+            "Use them only for this question. Don't save them, copy them into files, or quote them in anything others will see.")
 
 
 def remember_always(job):
@@ -290,6 +335,8 @@ def handle(job):
             name = r["name"]
             t = {"id": f"{int(time.time() * 1000):x}", "name": name[:1].upper() + name[1:], "folder": r["folder"], "state": "queued"}
         reopened = bool(t.get("closed"))
+        if job.get("cross") and t.get("cross"):
+            job["text"] = crossing(job, t)
         t.update(closed=False, ask=None)
         save_thread(t)
         event(kind="ack", thread=t["id"], fresh=fresh, reopened=reopened, re=job["re"])

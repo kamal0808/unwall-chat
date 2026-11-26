@@ -220,6 +220,7 @@ function item(s) {
     const past = (s.sessions || []).map(p => `<button class="btn" data-revive="${esc(JSON.stringify(p))}" title="Reopen this conversation">${esc(p.title)} · ${new Date(p.active).toLocaleDateString(undefined, {day: 'numeric', month: 'short'})}</button>`).join('');
     return `<div class="claude">${re}${md(s.text)}${past ? `<div class="past">${past}</div>` : ''}</div>`;
   }
+  if (s.kind === 'cross') return `<div class="ack">Goals across the wall → <b>${esc(name(s.thread))}</b>: ${esc(s.text.slice(0, 140))}</div>`;
   if (s.kind === 'ask') return `<div class="ack">Question → <b>${esc(name(s.thread))}</b>: ${esc(s.text.slice(0, 140))}</div>`;
   if (s.kind === 'ack') return `<div class="ack">${s.reopened ? 'Reopened' : 'On it'} → <b>${esc(name(s.thread))}</b>${s.fresh ? ' (new thread)' : ''}</div>`;
   if (s.kind === 'closed') return `<div class="ack">Closed → <b>${esc(name(s.thread))}</b></div>`;
@@ -252,19 +253,21 @@ const all = [], seen = new Set();
 const markSeen = ids => { ids = ids.filter(id => !seen.has(id)); if (!ids.length) return; ids.forEach(id => seen.add(id)); needs(); fetch('/api/one/seen', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({ids})}) };
 function cards() {
   const latest = {};  // per thread, only its newest reply or question counts
-  for (const x of all) if (['receipt', 'ask'].includes(x.kind)) latest[x.thread] = x.id;
+  for (const x of all) if (['receipt', 'ask', 'cross'].includes(x.kind)) latest[x.thread] = x.id;
   return all.filter(x => !seen.has(x.id) && (
     (x.kind === 'claude' && x.re) ||
     (x.kind === 'receipt' && latest[x.thread] === x.id && threads[x.thread] && !threads[x.thread].closed) ||
-    (x.kind === 'ask' && latest[x.thread] === x.id && threads[x.thread]?.state === 'needs' && !threads[x.thread].closed)));
+    (['ask', 'cross'].includes(x.kind) && latest[x.thread] === x.id && threads[x.thread]?.state === 'needs' && !threads[x.thread].closed)));
 }
 function needs() {
   const list = cards();
   $('needs').style.display = list.length ? '' : 'none';
   $('fyTitle').textContent = `For you · ${list.length}`;
   $('asks').innerHTML = list.map(x => {
-    const t = threads[x.thread], who = x.kind === 'claude' ? 'Answer' : esc(t.name), kind = x.kind === 'ask' ? 'Question' : x.kind === 'receipt' ? 'Reply' : '';
-    const btns = x.kind === 'ask'
+    const t = threads[x.thread], who = x.kind === 'claude' ? 'Answer' : esc(t.name), kind = {ask: 'Question', receipt: 'Reply', cross: 'Goals across the wall'}[x.kind] || '';
+    const btns = x.kind === 'cross'
+      ? `<button class="btn" data-open="${x.thread}" data-seen="${x.id}">Read</button><button class="btn primary" data-cross="${x.thread}|allow" data-seen="${x.id}">Allow once</button><button class="btn" data-cross="${x.thread}|deny" data-seen="${x.id}">No</button>`
+      : x.kind === 'ask'
       ? `<button class="btn" data-open="${x.thread}" data-seen="${x.id}">Read</button>${YES_NO.test(x.text) ? `<button class="btn" data-yn="${x.thread}|Yes" data-seen="${x.id}">Yes</button><button class="btn" data-yn="${x.thread}|No" data-seen="${x.id}">No</button>` : ''}<button class="btn primary" data-answer="${x.thread}" data-seen="${x.id}">Answer</button>`
       : x.kind === 'receipt'
       ? `<button class="btn" data-open="${x.thread}" data-seen="${x.id}">Read</button><button class="btn" data-reply="${x.thread}">Reply</button><button class="btn primary" data-seen="${x.id}">Got it</button>`
@@ -374,6 +377,8 @@ document.body.addEventListener('click', async e => {
   const rv = e.target.closest('[data-revive]');
   if (rv) { const p = JSON.parse(rv.dataset.revive); await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `Reopen "${p.title}"`, revive: p})}); setTimeout(poll, 150); return }
   const rm = e.target.closest('[data-rm]'); if (rm) { pending.splice(+rm.dataset.rm, 1); return drawThumbs() }
+  const cr = e.target.closest('[data-cross]');
+  if (cr) { const [id, how] = cr.dataset.cross.split('|'); await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: how === 'allow' ? 'Allow once' : 'No', quote: id, cross: how})}); setTimeout(poll, 150); return }
   const yn = e.target.closest('[data-yn]');
   if (yn) { const [id, word] = yn.dataset.yn.split('|'), t = threads[id]; await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `> ${t.ask.replace(/\n/g, '\n> ')}\n\n${word}`, quote: id})}); setTimeout(poll, 150); return }
   const an = e.target.closest('[data-answer]'); if (an) { const t = threads[an.dataset.answer]; quote = {thread: t.id, from: t.name, text: t.ask}; drawQuote(); $('input').focus(); return }
