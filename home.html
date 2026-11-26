@@ -47,7 +47,9 @@ h1 small { font: 12px system-ui; color: var(--muted); margin-left: 8px; }
 .receipt { display: flex; align-items: flex-start; gap: 10px; text-align: left; width: 100%; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 12px; padding: 10px 14px; font: inherit; cursor: pointer; min-height: 44px; }
 .receipt:hover { border-color: var(--muted); }
 .receipt .t { font-weight: 500; white-space: nowrap; }
-.receipt .o { color: var(--muted); flex: 1; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
+.receipt .o { color: var(--muted); flex: 1; min-width: 0; white-space: pre-line; overflow-wrap: anywhere; max-height: 4.8em; overflow: hidden; }
+.receipt .dot { margin-top: 8px; }
+.receipt .t, .receipt .open { line-height: 1.6; }
 .re { font-size: 12px; color: var(--muted); margin: 0 0 2px; }
 .past { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .past a { font-size: 12px; }
