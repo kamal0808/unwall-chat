@@ -76,6 +76,11 @@ h1 small { font: 12px system-ui; color: var(--muted); margin-left: 8px; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 form { display: flex; flex-direction: column; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 10px 12px; margin-bottom: 16px; }
+.thumbs { display: flex; gap: 8px; flex-wrap: wrap; }
+.thumbs:empty { display: none; }
+.thumb { position: relative; }
+.thumb img { height: 56px; border-radius: 8px; border: 1px solid var(--line); display: block; }
+.thumb button { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; line-height: 1; padding: 0; }
 form .row { display: flex; gap: 10px; align-items: flex-end; }
 textarea { flex: 1; border: 0; background: none; color: var(--ink); font: inherit; resize: none; outline: none; max-height: 220px; overflow-y: auto; }
 .quote { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--muted); border-left: 3px solid var(--accent); padding: 2px 8px; }
@@ -132,6 +137,7 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
   </section>
   <form id="form">
     <div id="quotes"></div>
+    <div id="thumbs" class="thumbs"></div>
     <div class="row">
       <textarea id="input" rows="1" placeholder="Say anything. It goes to the right thread." aria-label="Message"></textarea>
       <button class="btn primary" type="submit">Send</button>
@@ -191,7 +197,7 @@ const bubble = t => t.role === 'user'
   ? `<div class="you">${esc(t.text)}</div>`
   : `<div class="claude">${t.tools?.length ? `<p class="tools">Used ${t.tools.length} tools: ${esc([...new Set(t.tools)].join(', '))}</p>` : ''}${md(t.text.replace(/^(RECEIPT|ASK):\s*/m, '**$1:** '))}</div>`;
 function item(s) {
-  if (s.kind === 'you') { said[s.id] = s.text; const q = s.text.match(/^((?:> .*\n?)+)\n*([\s\S]*)$/); return q ? `<div class="you"><blockquote>${esc(q[1].replace(/^> /gm, ''))}</blockquote>${esc(q[2])}</div>` : `<div class="you">${esc(s.text)}</div>` }
+  if (s.kind === 'you') { said[s.id] = s.text; const q = s.text.match(/^((?:> .*\n?)+)\n*([\s\S]*)$/), pic = s.images ? `<div class="re">📎 ${s.images} image${s.images > 1 ? 's' : ''}</div>` : ''; return q ? `<div class="you"><blockquote>${esc(q[1].replace(/^> /gm, ''))}</blockquote>${esc(q[2])}${pic}</div>` : `<div class="you">${esc(s.text)}${pic}</div>` }
   if (s.kind === 'claude') {
     const re = s.re && s.re !== lastId && said[s.re] ? `<p class="re">↳ re: “${esc(said[s.re].slice(0, 90))}${said[s.re].length > 90 ? '…' : ''}”</p>` : '';
     const past = (s.sessions || []).map(p => `<button class="btn" data-revive="${esc(JSON.stringify(p))}" title="Reopen this conversation">${esc(p.title)} · ${new Date(p.active).toLocaleDateString(undefined, {day: 'numeric', month: 'short'})}</button>`).join('');
@@ -204,10 +210,31 @@ function item(s) {
   return '';
 }
 let lastId = 0;
+// shortcut: a question that opens with a yes/no verb and has no "or" gets Yes/No buttons; upgrade if the relay should flag it itself
+const YES_NO = /^(can|could|should|shall|do|does|did|is|are|was|will|would|may|have|has|ok|okay)\b(?![\s\S]*\bor\b)[\s\S]*\?\s*$/i;
+let pending = []; // images waiting to be sent: data URLs, already shrunk
+function shrink(file) {
+  return new Promise(ok => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, 1600 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url); ok(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); ok(null) };
+    img.src = url;
+  });
+}
+async function addImages(files) {
+  for (const f of [...files].filter(f => f.type.startsWith('image/')).slice(0, 4 - pending.length)) { const d = await shrink(f); if (d) pending.push(d) }
+  drawThumbs();
+}
+const drawThumbs = () => $('thumbs').innerHTML = pending.map((d, i) => `<span class="thumb"><img src="${d}" alt="Attached image ${i + 1}"><button type="button" data-rm="${i}" aria-label="Remove image">×</button></span>`).join('');
 function needs() {
   const asks = Object.values(threads).filter(t => t.state === 'needs' && t.ask && !t.closed);
   $('needs').style.display = asks.length ? '' : 'none';
-  $('asks').innerHTML = asks.map(t => `<div class="ask"><p><b>${esc(t.name)}:</b> ${esc(t.ask)}</p><button class="btn" data-open="${t.id}">Read</button><button class="btn primary" data-answer="${t.id}">Answer</button></div>`).join('');
+  $('asks').innerHTML = asks.map(t => `<div class="ask"><p><b>${esc(t.name)}:</b> ${esc(t.ask)}</p><button class="btn" data-open="${t.id}">Read</button>${YES_NO.test(t.ask) ? `<button class="btn" data-yn="${t.id}|Yes">Yes</button><button class="btn" data-yn="${t.id}|No">No</button>` : ''}<button class="btn primary" data-answer="${t.id}">Answer</button></div>`).join('');
 }
 function chips() {
   const busy = Object.values(threads).filter(t => !t.closed && ['working', 'queued'].includes(t.state));
@@ -279,14 +306,17 @@ const drawQuote = () => $('quotes').innerHTML = quote ? `<div class="quote"><spa
 $('form').onsubmit = async e => {
   e.preventDefault();
   let text = $('input').value.trim();
-  if (!text && !quote?.text) return;
+  if (!text && !quote?.text && !pending.length) return;
   if (quote?.text) text = `> ${quote.text.replace(/\n/g, '\n> ')}\n\n${text}`;
-  const q = quote?.thread; quote = null; drawQuote(); $('input').value = ''; grow();
-  await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text, quote: q})});
+  const q = quote?.thread, images = pending; quote = null; pending = []; drawQuote(); drawThumbs(); $('input').value = ''; grow();
+  await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text, quote: q, images})});
   setTimeout(poll, 150);
 };
 const grow = () => { const i = $('input'); i.style.height = 'auto'; i.style.height = Math.min(i.scrollHeight, 220) + 'px' };
 $('input').addEventListener('input', grow);
+$('form').addEventListener('paste', e => { if ([...e.clipboardData.files].some(f => f.type.startsWith('image/'))) { e.preventDefault(); addImages(e.clipboardData.files) } });
+$('form').addEventListener('dragover', e => e.preventDefault());
+$('form').addEventListener('drop', e => { e.preventDefault(); addImages(e.dataTransfer.files) });
 $('input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('form').requestSubmit() } };
 
 document.body.addEventListener('click', async e => {
@@ -298,6 +328,9 @@ document.body.addEventListener('click', async e => {
   const c = e.target.closest('[data-close]'); if (c) { await fetch(`/api/one/thread/${c.dataset.close}/close`, {method: 'POST'}); $('panel').classList.remove('open'); openK = null; return poll() }
   const rv = e.target.closest('[data-revive]');
   if (rv) { const p = JSON.parse(rv.dataset.revive); await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `Reopen "${p.title}"`, revive: p})}); setTimeout(poll, 150); return }
+  const rm = e.target.closest('[data-rm]'); if (rm) { pending.splice(+rm.dataset.rm, 1); return drawThumbs() }
+  const yn = e.target.closest('[data-yn]');
+  if (yn) { const [id, word] = yn.dataset.yn.split('|'), t = threads[id]; await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `> ${t.ask.replace(/\n/g, '\n> ')}\n\n${word}`, quote: id})}); setTimeout(poll, 150); return }
   const an = e.target.closest('[data-answer]'); if (an) { const t = threads[an.dataset.answer]; quote = {thread: t.id, from: t.name, text: t.ask}; drawQuote(); $('input').focus(); return }
   const rp = e.target.closest('[data-reply]'); if (rp) { quote = {thread: rp.dataset.reply, from: name(rp.dataset.reply), text: ''}; drawQuote(); $('input').focus(); return }
   const w = e.target.closest('[data-wrong]'); if (w) { quote = {thread: w.dataset.wrong, from: name(w.dataset.wrong), text: 'Not right:'}; drawQuote(); $('panel').classList.remove('open'); $('input').focus(); return }

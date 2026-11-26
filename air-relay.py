@@ -6,9 +6,10 @@ Holds one request open to the Unwall box on Cloudflare (answered when there is a
 thread, using the Claude Code engine already installed here, in Kamal's real folders and tools.
 Idle cost is one sleeping HTTP request; Claude runs get low CPU priority.
 """
-import glob, json, os, re, subprocess, threading, time, urllib.error, urllib.request
+import base64, glob, json, os, re, subprocess, threading, time, urllib.error, urllib.request
 
 HOME = os.path.expanduser("~")
+IMG_DIR = os.path.join(HOME, ".cache/unwall-images")
 CLAUDE = os.path.join(HOME, ".local/bin/claude")
 DEV = os.path.join(HOME, "dev")
 MODELS = {"Haiku": "haiku", "Sonnet": "sonnet", "Opus": "opus"}
@@ -222,6 +223,15 @@ def run_thread(job, t, text):
 def handle(job):
     print("job", job.get("re"), "revive" if job.get("revive") else "message", flush=True)
     try:
+        paths = []
+        for i, d in enumerate(job.get("imgs") or []):
+            head, _, b64 = d.partition(",")
+            ext = {"image/png": "png", "image/webp": "webp", "image/gif": "gif"}.get(head[5:].split(";")[0], "jpg")
+            os.makedirs(IMG_DIR, exist_ok=True)
+            paths.append(os.path.join(IMG_DIR, f"{job['re']}-{i}.{ext}"))
+            open(paths[-1], "wb").write(base64.b64decode(b64))
+        if paths:
+            job["text"] += "\n\n[Kamal attached images; look at them with the Read tool: " + ", ".join(paths) + "]"
         if job.get("revive"):
             p = job["revive"]
             t = {"id": f"{int(time.time() * 1000):x}", "name": p["title"][:60], "folder": p["cwd"] or os.path.join(DEV, "topc"),

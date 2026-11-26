@@ -39,10 +39,12 @@ export class Box extends DurableObject {
       return json({stream: s.stream.filter(x => x.id > after), threads, settings: s.settings, airOnline: Date.now() - this.seen < 120000, usage: s.usage});
     }
     if (p === '/api/one' && req.method === 'POST') {
-      const {text, quote, revive} = await body();
-      if (typeof text !== 'string' || !text.trim()) return json({error: 'empty message'}, 400);
-      const you = this.push({kind: 'you', text: text.trim()});
-      s.inbox.push({type: 'message', re: you.id, text: text.trim(), quote: quote || null, revive: revive?.cli ? revive : null});
+      const {text, quote, revive, images} = await body();
+      const imgs = (Array.isArray(images) ? images : []).filter(i => typeof i === 'string' && i.startsWith('data:image/') && i.length < 1.8e6).slice(0, 4);
+      if (typeof text !== 'string' || (!text.trim() && !imgs.length)) return json({error: 'empty message'}, 400);
+      const you = this.push({kind: 'you', text: text.trim(), images: imgs.length});
+      for (const [i, d] of imgs.entries()) await this.ctx.storage.put(`img:${you.id}:${i}`, d);
+      s.inbox.push({type: 'message', re: you.id, text: text.trim(), quote: quote || null, revive: revive?.cli ? revive : null, images: imgs.length});
       await this.save(); this.wake();
       return json({ok: true}, 202);
     }
@@ -75,7 +77,9 @@ export class Box extends DurableObject {
       await this.save();
       // everything the relay needs to route and answer, without a second round trip
       const threads = Object.values(s.threads).map(t => ({...t, log: undefined}));
-      return json({...job, settings: s.settings, threads, recent: s.stream.slice(-12)});
+      const imgs = [];
+      for (let i = 0; i < (job.images || 0); i++) { const d = await this.ctx.storage.get(`img:${job.re}:${i}`); if (d) imgs.push(d) }
+      return json({...job, imgs, settings: s.settings, threads, recent: s.stream.slice(-12)});
     }
     if (p === '/api/relay/usage' && req.method === 'POST') {
       const {thread, tokens, cost} = await body();
@@ -87,7 +91,9 @@ export class Box extends DurableObject {
       await this.save(); return json({ok: true});
     }
     if (p === '/api/relay/ack' && req.method === 'POST') {
-      const {re} = await body(); delete (s.inflight ||= {})[re]; await this.save(); return json({ok: true});
+      const {re} = await body(); delete (s.inflight ||= {})[re];
+      await this.ctx.storage.delete([0, 1, 2, 3].map(i => `img:${re}:${i}`));
+      await this.save(); return json({ok: true});
     }
     if (p === '/api/relay/event' && req.method === 'POST') {
       const e = await body();
