@@ -179,6 +179,16 @@ def answer(job):
           sessions=[{"title": s["title"], "cli": s["cli"], "cwd": s["cwd"], "active": s["active"]} for s in past[:3]])
 
 
+def brief(job):
+    """What a new thread knows before Kamal's message: the conversation so far and earlier sessions on the topic."""
+    past = past_sessions(job["text"], desktop_sessions())[:2]
+    notes = "\n\n".join(f'"{s["title"]}" ({time.strftime("%d %b", time.localtime(s["active"] / 1000))}):\n{w}' for s in past if (w := last_words(s)))
+    return ("You are a thread in Unwall, Kamal's one box. Before asking him anything, look it up: the TOPC brain (Basic Memory, "
+            "project topc), the earlier sessions below, files and tools here.\n\n"
+            f"The conversation in the box so far:\n{recent(job)}\n\n" + (f"Earlier sessions on this:\n{notes}\n\n" if notes else "") +
+            "Kamal's message:\n")
+
+
 LOCKS = {}
 
 
@@ -225,7 +235,7 @@ def handle(job):
         t.update(closed=False, ask=None)
         save_thread(t)
         event(kind="ack", thread=t["id"], fresh=fresh, reopened=reopened, re=job["re"])
-        run_thread(job, t, job["text"])
+        run_thread(job, t, brief(job) + job["text"] if fresh else job["text"])
     except Exception as e:  # never leave a message without a reply in the stream
         try:
             event(kind="claude", text=f"Something broke on your Mac while handling this: {str(e)[:200]}", re=job.get("re"))

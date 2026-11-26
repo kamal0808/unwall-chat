@@ -226,9 +226,14 @@ setInterval(() => {
   if (tick % 20 === 0) $('verb').textContent = VERBS[Math.floor(Math.random() * VERBS.length)] + '…';
 }, 120);
 
+let polling = false;
 async function poll() {
+  // the timer and a send can both poll; two at once drew every new message twice
+  if (polling) return;
+  polling = true;
   try {
     const r = await (await fetch('/api/one?after=' + last)).json();
+    r.stream = r.stream.filter(x => x.id > last);
     threads = r.threads;
     if (document.activeElement !== $('mMain')) $('mMain').value = r.settings.main;
     if (document.activeElement !== $('mBg')) $('mBg').value = r.settings.threads;
@@ -242,7 +247,7 @@ async function poll() {
     }
     for (const x of r.stream) { if (x.kind === 'you') seenYou[x.id] = x.at; if (x.re) answered.add(x.re) }
     chips(); needs(); working();
-  } catch {}
+  } catch {} finally { polling = false }
 }
 setInterval(poll, 1500);
 
