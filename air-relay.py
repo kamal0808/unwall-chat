@@ -348,23 +348,23 @@ def handle(job):
             pass
 
 
-STOP = threading.Event()
+HALT = threading.Event()
 
 
 def main():
     # an update or restart (SIGTERM from launchd) stops taking work and lets running threads finish first
-    signal.signal(signal.SIGTERM, lambda *_: STOP.set())
+    signal.signal(signal.SIGTERM, lambda *_: HALT.set())
     workers = []
-    while not STOP.is_set():
+    while not HALT.is_set():
         try:
             status, job = call("/api/relay/next")
-            if status == 200 and job and not STOP.is_set():
+            if status == 200 and job and not HALT.is_set():
                 call("/api/relay/ack", {"re": job["re"]}, timeout=30)  # or the box hands it out again
                 w = threading.Thread(target=handle, args=(job,))
                 w.start(); workers.append(w)
             workers = [w for w in workers if w.is_alive()]
         except (urllib.error.URLError, OSError, ValueError):
-            STOP.wait(30)  # box or network down (Wi-Fi off, Cloudflare unreachable): back off, don't spin
+            HALT.wait(30)  # box or network down (Wi-Fi off, Cloudflare unreachable): back off, don't spin
     for w in workers:
         w.join()
 
