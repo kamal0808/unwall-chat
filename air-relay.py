@@ -49,7 +49,7 @@ def save_thread(t, log=None):
     call("/api/relay/thread", {"thread": t, "log": log or []}, timeout=30)
 
 
-def claude(prompt, cwd, model, resume=None, append=None, tools=True, fork=False):
+def claude(prompt, cwd, model, resume=None, append=None, tools=True, fork=False, tid=None):
     cwd = cwd if os.path.isdir(cwd) else os.path.join(DEV, "topc")
     env = dict(os.environ, PATH=f"{HOME}/.local/bin:/opt/homebrew/bin:/usr/bin:/bin", UNWALL_RELAY="1")
     top = os.path.relpath(cwd, DEV).split(os.sep)[0]
@@ -68,6 +68,12 @@ def claude(prompt, cwd, model, resume=None, append=None, tools=True, fork=False)
     r = json.loads(p.stdout or "{}")
     if p.returncode or r.get("is_error"):
         raise RuntimeError((r.get("result") or p.stderr or "claude failed")[-300:])
+    u = r.get("usage") or {}
+    tokens = sum(u.get(k) or 0 for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+    try:
+        call("/api/relay/usage", {"thread": tid, "tokens": tokens, "cost": r.get("total_cost_usd") or 0}, timeout=30)
+    except Exception:
+        pass  # a missed counter must never fail the answer
     return r.get("result", ""), r.get("session_id")
 
 
@@ -198,7 +204,7 @@ def run_thread(job, t, text):
         try:
             # a reopened desktop session is forked, so the app's own copy stays as it was
             fork = t.pop("fork", False)
-            out, sid = claude(text, os.path.join(DEV, t["folder"]), MODELS[job["settings"]["threads"]], t.get("sessionId"), RECEIPT, fork=fork)
+            out, sid = claude(text, os.path.join(DEV, t["folder"]), MODELS[job["settings"]["threads"]], t.get("sessionId"), RECEIPT, fork=fork, tid=t["id"])
             t["sessionId"] = sid if fork else (t.get("sessionId") or sid)
             asked = (m.group(1).strip() if (m := re.search(r"^ASK:\s*([\s\S]+)$", out, re.M)) else None)
             receipt = (m.group(1) if (m := re.search(r"^RECEIPT:\s*([\s\S]+)$", out, re.M)) else out.strip().split("\n\n")[-1]).strip()[:500]

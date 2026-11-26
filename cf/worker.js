@@ -36,7 +36,7 @@ export class Box extends DurableObject {
     if (p === '/api/one' && req.method === 'GET') {
       const after = Number(url.searchParams.get('after') || 0);
       const threads = Object.fromEntries(Object.entries(s.threads).map(([k, t]) => [k, {...t, log: undefined}]));
-      return json({stream: s.stream.filter(x => x.id > after), threads, settings: s.settings, airOnline: Date.now() - this.seen < 120000});
+      return json({stream: s.stream.filter(x => x.id > after), threads, settings: s.settings, airOnline: Date.now() - this.seen < 120000, usage: s.usage});
     }
     if (p === '/api/one' && req.method === 'POST') {
       const {text, quote, revive} = await body();
@@ -76,6 +76,15 @@ export class Box extends DurableObject {
       // everything the relay needs to route and answer, without a second round trip
       const threads = Object.values(s.threads).map(t => ({...t, log: undefined}));
       return json({...job, settings: s.settings, threads, recent: s.stream.slice(-12)});
+    }
+    if (p === '/api/relay/usage' && req.method === 'POST') {
+      const {thread, tokens, cost} = await body();
+      const day = new Date().toISOString().slice(0, 10); // shortcut: UTC day, not Kamal's local midnight
+      const u = s.usage = s.usage?.day === day ? s.usage : {day, tokens: 0, cost: 0};
+      u.tokens += tokens; u.cost += cost;
+      const t = s.threads[thread];
+      if (t) { t.tokens = (t.tokens || 0) + tokens; t.cost = (t.cost || 0) + cost }
+      await this.save(); return json({ok: true});
     }
     if (p === '/api/relay/ack' && req.method === 'POST') {
       const {re} = await body(); delete (s.inflight ||= {})[re]; await this.save(); return json({ok: true});

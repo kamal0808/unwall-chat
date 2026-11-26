@@ -112,7 +112,7 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
 <div class="app">
   <header>
     <div class="top">
-      <h1>Unwall</h1>
+      <h1>Unwall<small id="usage" title="Tokens and cost used today (UTC day): all threads, routing and answers"></small></h1>
       <button class="icon" id="gear" aria-label="Settings" title="Settings">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       </button>
@@ -239,6 +239,7 @@ async function poll() {
     if (document.activeElement !== $('mBg')) $('mBg').value = r.settings.threads;
     $('chips').dataset.air = r.airOnline ? '' : 'Your Mac is offline: messages wait until it wakes.';
     $('airNote').textContent = $('chips').dataset.air;
+    if (r.usage) $('usage').textContent = `${fmtTok(r.usage.tokens)} tokens · $${r.usage.cost.toFixed(2)} today`;
     if (r.stream.length) {
       $('stream').insertAdjacentHTML('beforeend', r.stream.map(x => { const h = item(x); lastId = x.id; return h }).join(''));
       last = r.stream.at(-1).id;
@@ -251,11 +252,13 @@ async function poll() {
 }
 setInterval(poll, 1500);
 
+const fmtTok = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n);
+
 async function openThread(k) {
   openK = k;
   const {thread: t, turns} = await (await fetch('/api/one/thread/' + k)).json();
   $('pTitle').textContent = t.name;
-  $('pMeta').textContent = `${{done: 'Done', failed: 'Failed', needs: 'Waiting on you'}[t.state] || 'Working'}${t.closed ? ' · closed' : ''} · ${t.folder.startsWith('/') ? t.folder.replace(/^\/Users\/[^/]+/, '~') : '~/dev/' + t.folder} on your Mac`;
+  $('pMeta').textContent = `${{done: 'Done', failed: 'Failed', needs: 'Waiting on you'}[t.state] || 'Working'}${t.closed ? ' · closed' : ''} · ${t.folder.startsWith('/') ? t.folder.replace(/^\/Users\/[^/]+/, '~') : '~/dev/' + t.folder} on your Mac${t.tokens ? ` · ${fmtTok(t.tokens)} tokens · $${t.cost.toFixed(2)}` : ''}`;
   $('pActions').innerHTML = `<button class="btn primary" data-reply="${k}">Reply</button>` +
     (!t.closed && ['done', 'failed'].includes(t.state) ? `<button class="btn" data-close="${k}">Looks good, close thread</button><button class="btn" data-wrong="${k}">Not right</button>` : '');
   $('pBody').innerHTML = turns.length ? turns.map(bubble).join('') : '<p class="tools">Working… its conversation shows here once it has one.</p>';
