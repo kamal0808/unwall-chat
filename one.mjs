@@ -10,10 +10,19 @@ const MODELS = {Haiku: 'haiku', Sonnet: 'sonnet', Opus: 'opus'};
 const BRAIN = {'basic-memory': {type: 'http', url: 'http://127.0.0.1:8765/mcp'}};
 const RECEIPT = `Kamal reads only the last part of your reply, so end it in one of two ways:
 - "RECEIPT: " followed by the result itself in at most 3 short lines. If he asked a question, that is the answer with its facts, numbers or list, not a description of what you did. If you changed something, say what changed and where he can check it.
-- "ASK: " followed by the one question you need him to answer before you can go on, when you cannot finish without him. Ask it so a one-line reply settles it.`;
+- "ASK: " followed by one question, only when you truly cannot go on without him: you need his yes for something risky or outward (sending, posting, paying, deleting), or the answer exists nowhere you can look. Never ask what you can find out yourself from files, tools, the TOPC brain or past sessions; decide, say what you assumed, and finish the work.`;
 
-let state = {settings: {main: 'Sonnet', threads: 'Sonnet'}, threads: {}, stream: [], seq: 0};
-const ready = readFile(STATE, 'utf8').then(s => { state = {...state, ...JSON.parse(s)} }).catch(() => {});
+let state = {settings: {main: 'Sonnet', threads: 'Sonnet', where: 'air'}, threads: {}, stream: [], seq: 0};
+const ready = readFile(STATE, 'utf8').then(s => { const old = JSON.parse(s); state = {...state, ...old, settings: {...state.settings, ...old.settings}} }).catch(() => {});
+
+// Air threads: the relay on Kamal's Mac holds one request open on /api/air/next and runs each job there
+const AIR_HOME = '/Users/kamal';
+const air = {queue: [], wake: null, seen: 0, done: {}};
+const airOnline = () => Date.now() - air.seen < 120000;
+function runOnAir(job) {
+  air.queue.push(job); air.wake?.();
+  return new Promise(resolve => { air.done[job.id] = resolve });
+}
 const save = async () => { await mkdir(DIR, {recursive: true}); await writeFile(STATE, JSON.stringify(state)) };
 const push = item => { state.stream.push({id: ++state.seq, at: Date.now(), ...item}); return save() };
 const busy = {}; // thread id -> promise of its current run, so one thread handles one message at a time
@@ -101,13 +110,20 @@ async function answer(text, re) {
 async function run(t, text) {
   t.state = 'working'; t.last = text.slice(0, 80); await save();
   try {
-    const {out, sessionId} = await ask(text, {
+    const where = t.where || state.settings.where;
+    if (!t.sessionId && t.log?.length) text = `This thread moved here from the other Mac. What happened so far:\n${t.log.slice(-4).map(l => `${l.role === 'user' ? 'Kamal' : 'You'}: ${l.text.slice(0, 1500)}`).join('\n')}\n\nKamal now: ${text}`;
+    const {out, sessionId} = where === 'air'
+      ? await runOnAir({id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text, cwd: `${AIR_HOME}/dev/${t.folder}`, sessionId: t.sessionId || null, model: MODELS[state.settings.threads], append: RECEIPT})
+          .then(r => { if (r.error) throw new Error(r.error); return r })
+      : await ask(text, {
       cwd: `${homedir()}/dev/${t.folder}`, resume: t.sessionId || undefined, model: MODELS[state.settings.threads],
       systemPrompt: {type: 'preset', preset: 'claude_code', append: RECEIPT, snapshot: false}, permissionMode: 'auto',
       // shortcut: anything that would need Kamal's yes is refused until the approve buttons exist (next task)
       canUseTool: async () => ({behavior: 'deny', message: 'Unwall cannot ask Kamal for approval yet, so this was not allowed. Say so in your receipt.'}),
     });
     t.sessionId = t.sessionId || sessionId;
+    t.ran = where;
+    (t.log ||= []).push({role: 'user', text: text.replace(/^This thread moved here[\s\S]*\n\nKamal now: /, '')}, {role: 'claude', text: out});
     const asked = out.match(/^ASK:\s*([\s\S]+)$/m)?.[1].trim();
     // no marker: the reply's last paragraph is still the most useful part
     t.receipt = (out.match(/^RECEIPT:\s*([\s\S]+)$/m)?.[1] || out.trim().split(/\n\n/).at(-1)).trim().slice(0, 500);
@@ -133,7 +149,8 @@ async function send(text, quoteThread) {
     t = state.threads[id] = {id, name: r.name.charAt(0).toUpperCase() + r.name.slice(1), folder: r.folder, state: 'queued'};
   }
   const reopened = t.closed; t.closed = false; t.ask = null;
-  await push({kind: 'ack', thread: t.id, fresh: !t.sessionId && t.state === 'queued', reopened});
+  t.where ||= state.settings.where;
+  await push({kind: 'ack', thread: t.id, fresh: !t.sessionId && t.state === 'queued', reopened, where: t.where, offline: t.where === 'air' && !airOnline()});
   busy[t.id] = (busy[t.id] || Promise.resolve()).then(() => run(t, text));
 }
 
@@ -167,7 +184,7 @@ export async function one(req, res, url) {
   await ready;
   if (url.pathname === '/api/one' && req.method === 'GET') {
     const after = Number(url.searchParams.get('after') || 0);
-    return json(res, 200, {stream: state.stream.filter(s => s.id > after), threads: state.threads, settings: state.settings});
+    return json(res, 200, {stream: state.stream.filter(s => s.id > after), threads: state.threads, settings: state.settings, airOnline: airOnline()});
   }
   if (url.pathname === '/api/one' && req.method === 'POST') {
     const {text, quote} = await body(req);
@@ -175,15 +192,35 @@ export async function one(req, res, url) {
     send(text.trim(), quote).catch(e => push({kind: 'claude', text: `Something broke: ${e.message}`}));
     return json(res, 202, {ok: true}); // the box never waits for routing
   }
+  if (url.pathname === '/api/air/next') {
+    air.seen = Date.now();
+    if (!air.queue.length) await new Promise(r => { air.wake = r; setTimeout(r, 50000) });
+    air.wake = null; air.seen = Date.now();
+    const job = air.queue.shift();
+    return job ? json(res, 200, job) : (res.writeHead(204), res.end());
+  }
+  if (url.pathname === '/api/air/done' && req.method === 'POST') {
+    const r = await body(req);
+    air.done[r.id]?.(r); delete air.done[r.id];
+    return json(res, 200, {ok: true});
+  }
   if (url.pathname === '/api/one/settings' && req.method === 'POST') {
     const s = await body(req);
     for (const k of ['main', 'threads']) if (MODELS[s[k]]) state.settings[k] = s[k];
+    if (['air', 'mini'].includes(s.where)) state.settings.where = s.where;
     await save(); return json(res, 200, state.settings);
   }
-  const m = url.pathname.match(/^\/api\/one\/thread\/(\w+)(\/close)?$/);
+  const m = url.pathname.match(/^\/api\/one\/thread\/(\w+)(\/close|\/where)?$/);
   if (m && state.threads[m[1]]) {
     const t = state.threads[m[1]];
-    if (m[2] && req.method === 'POST') { t.closed = true; await push({kind: 'closed', thread: t.id}); return json(res, 200, {ok: true}) }
+    if (m[2] === '/close' && req.method === 'POST') { t.closed = true; await push({kind: 'closed', thread: t.id}); return json(res, 200, {ok: true}) }
+    if (m[2] === '/where' && req.method === 'POST') {
+      // a thread moving machines starts a fresh conversation there, briefed by what it did so far
+      const {where} = await body(req);
+      if (['air', 'mini'].includes(where) && where !== t.where) { t.where = where; t.sessionId = null; await save() }
+      return json(res, 200, {ok: true});
+    }
+    if (t.log?.length) return json(res, 200, {thread: t, turns: t.log});
     const msgs = t.sessionId ? await getSessionMessages(t.sessionId, {dir: `${homedir()}/dev/${t.folder}`}).catch(() => []) : [];
     return json(res, 200, {thread: t, turns: turns(msgs)});
   }

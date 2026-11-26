@@ -54,7 +54,7 @@ createServer(async (req, res) => {
       res.writeHead(200, {'content-type': 'text/html; charset=utf-8'});
       return res.end(await readFile(new URL(STATIC[url.pathname], import.meta.url)));
     }
-    if (url.pathname.startsWith('/api/one') && await one(req, res, url) !== false) return;
+    if (/^\/api\/(one|air)/.test(url.pathname) && await one(req, res, url) !== false) return;
     if (url.pathname === '/api/chats') {
       const list = await listSessions({dir: CWD, limit: 40});
       return json(res, 200, list.map(s => ({id: s.sessionId, title: s.customTitle || s.summary || s.firstPrompt || 'Untitled', at: s.lastModified})));

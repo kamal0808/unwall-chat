@@ -151,6 +151,12 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
       <p>The threads that do the actual work: code, research, drafts.</p>
       <select id="mBg"><option>Haiku</option><option>Sonnet</option><option>Opus</option></select>
     </div>
+    <div class="setting">
+      <label for="mWhere">Run new threads on</label>
+      <p>Your Mac uses your real folders and tools (Formy, WhatsApp, your connectors). The mini keeps going when your Mac sleeps and saves its battery. Each thread can also be moved from its panel.</p>
+      <select id="mWhere"><option value="air">Your Mac (MacBook Air)</option><option value="mini">The Mac mini</option></select>
+      <p id="airState" style="margin:8px 0 0"></p>
+    </div>
   </div>
 </section>
 <button class="btn primary" id="quoteBtn">Quote</button>
@@ -175,7 +181,7 @@ function item(s) {
     return `<div class="claude">${re}${md(s.text)}${past ? `<div class="past">${past}</div>` : ''}</div>`;
   }
   if (s.kind === 'ask') return `<div class="ack">Needs you → <b>${esc(name(s.thread))}</b> (question above the box)</div>`;
-  if (s.kind === 'ack') return `<div class="ack">${s.reopened ? 'Reopened' : 'On it'} → <b>${esc(name(s.thread))}</b>${s.fresh ? ' (new thread)' : ''}</div>`;
+  if (s.kind === 'ack') return `<div class="ack">${s.reopened ? 'Reopened' : 'On it'} → <b>${esc(name(s.thread))}</b>${s.fresh ? ' (new thread)' : ''} · ${s.where === 'mini' ? 'mini' : 'your Mac'}${s.offline ? ' (offline: runs when it\'s back)' : ''}</div>`;
   if (s.kind === 'closed') return `<div class="ack">Closed → <b>${esc(name(s.thread))}</b></div>`;
   if (s.kind === 'receipt') return `<button class="receipt" data-open="${s.thread}"><span class="dot ${s.failed ? '' : 'ok'}"${s.failed ? ' style="background:#c0392b"' : ''}></span><span class="t">${esc(name(s.thread))}</span><span class="o">${esc(s.text)}</span><span class="open">Read</span></button>`;
   return '';
@@ -196,6 +202,8 @@ async function poll() {
     threads = r.threads;
     if (document.activeElement !== $('mMain')) $('mMain').value = r.settings.main;
     if (document.activeElement !== $('mBg')) $('mBg').value = r.settings.threads;
+    if (document.activeElement !== $('mWhere')) $('mWhere').value = r.settings.where || 'air';
+    $('airState').textContent = r.airOnline ? 'Your Mac is connected.' : 'Your Mac is not connected right now (asleep, offline, or the relay is off).';
     if (r.stream.length) {
       $('stream').insertAdjacentHTML('beforeend', r.stream.map(x => { const h = item(x); lastId = x.id; return h }).join(''));
       last = r.stream.at(-1).id;
@@ -211,7 +219,8 @@ async function openThread(k) {
   openK = k;
   const {thread: t, turns} = await (await fetch('/api/one/thread/' + k)).json();
   $('pTitle').textContent = t.name;
-  $('pMeta').textContent = `${{done: 'Done', failed: 'Failed', needs: 'Waiting on you'}[t.state] || 'Working'}${t.closed ? ' · closed' : ''} · ~/dev/${t.folder}`;
+  const on = t.where === 'mini' ? 'mini' : 'air';
+  $('pMeta').innerHTML = `${{done: 'Done', failed: 'Failed', needs: 'Waiting on you'}[t.state] || 'Working'}${t.closed ? ' · closed' : ''} · ~/dev/${esc(t.folder)} · runs on ${on === 'mini' ? 'the mini' : 'your Mac'} <button class="link" data-move-to="${on === 'mini' ? 'air' : 'mini'}" data-thread="${k}">Move to ${on === 'mini' ? 'your Mac' : 'the mini'}</button>`;
   $('pActions').innerHTML = `<button class="btn primary" data-reply="${k}">Reply</button>` +
     (!t.closed && ['done', 'failed'].includes(t.state) ? `<button class="btn" data-close="${k}">Looks good, close thread</button><button class="btn" data-wrong="${k}">Not right</button>` : '');
   $('pBody').innerHTML = turns.length ? turns.map(bubble).join('') : '<p class="tools">Working… its conversation shows here once it has one.</p>';
@@ -239,6 +248,7 @@ document.body.addEventListener('click', async e => {
   if ($('panel').classList.contains('open') && !$('panel').contains(e.target) && e.target.id !== 'quoteBtn' && !getSelection().toString().trim()) { $('panel').classList.remove('open'); openK = null }
   const c = e.target.closest('[data-close]'); if (c) { await fetch(`/api/one/thread/${c.dataset.close}/close`, {method: 'POST'}); $('panel').classList.remove('open'); openK = null; return poll() }
   const an = e.target.closest('[data-answer]'); if (an) { const t = threads[an.dataset.answer]; quote = {thread: t.id, from: t.name, text: t.ask}; drawQuote(); $('input').focus(); return }
+  const mv = e.target.closest('[data-move-to]'); if (mv) { await fetch(`/api/one/thread/${mv.dataset.thread}/where`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({where: mv.dataset.moveTo})}); await poll(); return openThread(mv.dataset.thread) }
   const rp = e.target.closest('[data-reply]'); if (rp) { quote = {thread: rp.dataset.reply, from: name(rp.dataset.reply), text: ''}; drawQuote(); $('input').focus(); return }
   const w = e.target.closest('[data-wrong]'); if (w) { quote = {thread: w.dataset.wrong, from: name(w.dataset.wrong), text: 'Not right:'}; drawQuote(); $('panel').classList.remove('open'); $('input').focus(); return }
   if (e.target.id === 'unquote') { quote = null; drawQuote(); return }
@@ -256,7 +266,8 @@ document.addEventListener('mouseup', () => setTimeout(() => {
   const r = sel.getRangeAt(0).getBoundingClientRect();
   b.style.display = 'block'; b.style.top = Math.max(8, r.top - 46) + 'px'; b.style.left = Math.min(innerWidth - 90, r.left) + 'px';
 }, 0));
-const saveSettings = () => fetch('/api/one/settings', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({main: $('mMain').value, threads: $('mBg').value})});
+const saveSettings = () => fetch('/api/one/settings', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({main: $('mMain').value, threads: $('mBg').value, where: $('mWhere').value})});
+$('mWhere').onchange = () => saveSettings();
 $('mMain').onchange = saveSettings; $('mBg').onchange = saveSettings;
 $('pClose').onclick = () => { $('panel').classList.remove('open'); openK = null };
 $('gear').onclick = () => { $('settings').classList.add('open'); $('sClose').focus() };
