@@ -66,7 +66,14 @@ h1 small { font: 12px system-ui; color: var(--muted); margin-left: 8px; }
 .batch-items { display: none; flex-direction: column; gap: 8px; padding-left: 14px; border-left: 2px solid var(--line); }
 .batch.open + .batch-items { display: flex; }
 
-.needs-strip { border: 1px solid var(--warn); background: var(--card); border-radius: 14px; padding: 10px 14px; margin-bottom: 10px; }
+.needs-strip { border: 1px solid var(--warn); background: var(--card); border-radius: 14px; padding: 10px 14px; margin-bottom: 10px; max-height: 45vh; overflow-y: auto; }
+.needs-strip .head { display: flex; align-items: center; justify-content: space-between; }
+.ask + .ask { border-top: 1px solid var(--line); }
+.ask .kind { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-right: 6px; }
+.ask p span.txt { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
+.perm { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 6px 0; border-top: 1px solid var(--line); }
+.perm span { flex: 1; }
+textarea.goals { width: 100%; min-height: 140px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 14px; resize: vertical; }
 .needs-strip h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--warn); margin: 0 0 6px; }
 .ask { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 0; }
 .ask p { margin: 0; flex: 1; min-width: 220px; }
@@ -131,8 +138,8 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
   <div class="chips" id="chips" aria-label="Threads at work"></div>
   <div id="stream" aria-live="polite"></div>
   <div class="working" id="working" hidden aria-live="off"><span class="glyph" id="glyph">✻</span><span id="verb">Thinking…</span><span class="what" id="what"></span></div>
-  <section class="needs-strip" id="needs" aria-label="Needs you" style="display:none">
-    <h2>Needs you</h2>
+  <section class="needs-strip" id="needs" aria-label="For you" style="display:none">
+    <div class="head"><h2 id="fyTitle">For you</h2><button class="link" id="clearAll">Clear all</button></div>
     <div id="asks"></div>
   </section>
   <form id="form">
@@ -167,6 +174,16 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
       <p>The threads that do the actual work: code, research, drafts.</p>
       <select id="mBg"><option>Haiku</option><option>Sonnet</option><option>Opus</option></select>
     </div>
+    <div class="setting">
+      <label for="goals">Your goals</label>
+      <p>Every thread reads these and decides by them when you aren't there to ask.</p>
+      <textarea id="goals" class="goals"></textarea>
+    </div>
+    <div class="setting">
+      <label>Already said yes, always</label>
+      <p>When you answer a thread's question with "yes, always", it lands here and no thread asks again. Remove one to be asked again.</p>
+      <div id="perms"></div>
+    </div>
   </div>
 </section>
 <button class="btn primary" id="quoteBtn">Quote</button>
@@ -189,7 +206,7 @@ window.fetch = (u, o = {}) => rawFetch(u, {...o, headers: {...(o.headers || {}),
 });
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 const md = t => DOMPurify.sanitize(marked.parse(t || ''));
-let threads = {}, last = 0, openK = null, quote = null;
+let threads = {}, last = 0, openK = null, quote = null, perms = [], booted = false;
 const said = {}; // id -> your message, so a late answer can say what it answers
 
 const name = id => threads[id]?.name || 'thread';
@@ -203,7 +220,7 @@ function item(s) {
     const past = (s.sessions || []).map(p => `<button class="btn" data-revive="${esc(JSON.stringify(p))}" title="Reopen this conversation">${esc(p.title)} · ${new Date(p.active).toLocaleDateString(undefined, {day: 'numeric', month: 'short'})}</button>`).join('');
     return `<div class="claude">${re}${md(s.text)}${past ? `<div class="past">${past}</div>` : ''}</div>`;
   }
-  if (s.kind === 'ask') return `<div class="ack">Needs you → <b>${esc(name(s.thread))}</b> (question above the box)</div>`;
+  if (s.kind === 'ask') return `<div class="ack">Question → <b>${esc(name(s.thread))}</b>: ${esc(s.text.slice(0, 140))}</div>`;
   if (s.kind === 'ack') return `<div class="ack">${s.reopened ? 'Reopened' : 'On it'} → <b>${esc(name(s.thread))}</b>${s.fresh ? ' (new thread)' : ''}</div>`;
   if (s.kind === 'closed') return `<div class="ack">Closed → <b>${esc(name(s.thread))}</b></div>`;
   if (s.kind === 'receipt') return `<button class="receipt" data-open="${s.thread}"><span class="dot ${s.failed ? '' : 'ok'}"${s.failed ? ' style="background:#c0392b"' : ''}></span><span class="t">${esc(name(s.thread))}</span><span class="o">${esc(s.text)}</span><span class="open">Read</span></button>`;
@@ -231,10 +248,29 @@ async function addImages(files) {
   drawThumbs();
 }
 const drawThumbs = () => $('thumbs').innerHTML = pending.map((d, i) => `<span class="thumb"><img src="${d}" alt="Attached image ${i + 1}"><button type="button" data-rm="${i}" aria-label="Remove image">×</button></span>`).join('');
+const all = [], seen = new Set();
+const markSeen = ids => { ids = ids.filter(id => !seen.has(id)); if (!ids.length) return; ids.forEach(id => seen.add(id)); needs(); fetch('/api/one/seen', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({ids})}) };
+function cards() {
+  const latest = {};  // per thread, only its newest reply or question counts
+  for (const x of all) if (['receipt', 'ask'].includes(x.kind)) latest[x.thread] = x.id;
+  return all.filter(x => !seen.has(x.id) && (
+    (x.kind === 'claude' && x.re) ||
+    (x.kind === 'receipt' && latest[x.thread] === x.id && threads[x.thread] && !threads[x.thread].closed) ||
+    (x.kind === 'ask' && latest[x.thread] === x.id && threads[x.thread]?.state === 'needs' && !threads[x.thread].closed)));
+}
 function needs() {
-  const asks = Object.values(threads).filter(t => t.state === 'needs' && t.ask && !t.closed);
-  $('needs').style.display = asks.length ? '' : 'none';
-  $('asks').innerHTML = asks.map(t => `<div class="ask"><p><b>${esc(t.name)}:</b> ${esc(t.ask)}</p><button class="btn" data-open="${t.id}">Read</button>${YES_NO.test(t.ask) ? `<button class="btn" data-yn="${t.id}|Yes">Yes</button><button class="btn" data-yn="${t.id}|No">No</button>` : ''}<button class="btn primary" data-answer="${t.id}">Answer</button></div>`).join('');
+  const list = cards();
+  $('needs').style.display = list.length ? '' : 'none';
+  $('fyTitle').textContent = `For you · ${list.length}`;
+  $('asks').innerHTML = list.map(x => {
+    const t = threads[x.thread], who = x.kind === 'claude' ? 'Answer' : esc(t.name), kind = x.kind === 'ask' ? 'Question' : x.kind === 'receipt' ? 'Reply' : '';
+    const btns = x.kind === 'ask'
+      ? `<button class="btn" data-open="${x.thread}" data-seen="${x.id}">Read</button>${YES_NO.test(x.text) ? `<button class="btn" data-yn="${x.thread}|Yes" data-seen="${x.id}">Yes</button><button class="btn" data-yn="${x.thread}|No" data-seen="${x.id}">No</button>` : ''}<button class="btn primary" data-answer="${x.thread}" data-seen="${x.id}">Answer</button>`
+      : x.kind === 'receipt'
+      ? `<button class="btn" data-open="${x.thread}" data-seen="${x.id}">Read</button><button class="btn" data-reply="${x.thread}">Reply</button><button class="btn primary" data-seen="${x.id}">Got it</button>`
+      : `<button class="btn primary" data-seen="${x.id}">Got it</button>`;
+    return `<div class="ask"><p>${kind ? `<span class="kind">${kind}</span>` : ''}<b>${who}:</b> <span class="txt">${esc(x.text)}</span></p>${btns}</div>`;
+  }).join('');
 }
 function chips() {
   const busy = Object.values(threads).filter(t => !t.closed && ['working', 'queued'].includes(t.state));
@@ -270,9 +306,15 @@ async function poll() {
   try {
     const r = await (await fetch('/api/one?after=' + last)).json();
     r.stream = r.stream.filter(x => x.id > last);
+    all.push(...r.stream); (r.seen || []).forEach(id => seen.add(id));
+    // first visit after this change: what's already in the stream counts as read, open questions stay
+    if (!booted) { booted = true; if (!(r.seen || []).length) setTimeout(() => markSeen(cards().filter(x => x.kind !== 'ask').map(x => x.id)), 0) }
     threads = r.threads;
     if (document.activeElement !== $('mMain')) $('mMain').value = r.settings.main;
     if (document.activeElement !== $('mBg')) $('mBg').value = r.settings.threads;
+    if (document.activeElement !== $('goals')) $('goals').value = r.settings.goals || '';
+    perms = r.settings.permissions || [];
+    $('perms').innerHTML = perms.map((p, i) => `<div class="perm"><span>${esc(p)}</span><button class="link" data-unperm="${i}">Remove</button></div>`).join('') || '<p>Nothing yet.</p>';
     $('chips').dataset.air = r.airOnline ? '' : 'Your Mac is offline: messages wait until it wakes.';
     $('airNote').textContent = $('chips').dataset.air;
     if (r.usage) $('usage').textContent = `${fmtTok(r.usage.tokens)} tokens today`;
@@ -320,6 +362,9 @@ $('form').addEventListener('drop', e => { e.preventDefault(); addImages(e.dataTr
 $('input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('form').requestSubmit() } };
 
 document.body.addEventListener('click', async e => {
+  const sn = e.target.closest('[data-seen]'); if (sn) markSeen([+sn.dataset.seen]);
+  if (e.target.id === 'clearAll') return markSeen(cards().map(x => x.id));
+  const up = e.target.closest('[data-unperm]'); if (up) { perms.splice(+up.dataset.unperm, 1); return fetch('/api/one/settings', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({permissions: perms})}).then(poll) }
   if (e.target.closest('#bubble')) return $('chips').classList.toggle('open');
   if (!e.target.closest('#chips')) $('chips').classList.remove('open');
   const o = e.target.closest('[data-open]'); if (o) { $('chips').classList.remove('open'); return openThread(o.dataset.open) }
@@ -351,6 +396,7 @@ document.addEventListener('mouseup', () => setTimeout(() => {
 }, 0));
 const saveSettings = () => fetch('/api/one/settings', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({main: $('mMain').value, threads: $('mBg').value})});
 $('mMain').onchange = saveSettings; $('mBg').onchange = saveSettings;
+$('goals').onchange = () => fetch('/api/one/settings', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({goals: $('goals').value})});
 $('pClose').onclick = () => { $('panel').classList.remove('open'); openK = null };
 $('gear').onclick = () => { $('settings').classList.add('open'); $('sClose').focus() };
 $('sClose').onclick = () => $('settings').classList.remove('open');

@@ -6,7 +6,7 @@ Holds one request open to the Unwall box on Cloudflare (answered when there is a
 thread, using the Claude Code engine already installed here, in Kamal's real folders and tools.
 Idle cost is one sleeping HTTP request; Claude runs get low CPU priority.
 """
-import base64, glob, json, os, re, subprocess, threading, time, urllib.error, urllib.request
+import base64, glob, json, os, re, signal, subprocess, threading, time, urllib.error, urllib.request
 
 HOME = os.path.expanduser("~")
 IMG_DIR = os.path.join(HOME, ".cache/unwall-images")
@@ -19,6 +19,20 @@ SESSIONS = os.path.join(HOME, "Library/Application Support/Claude/claude-code-se
 RECEIPT = """Kamal reads only the last part of your reply, so end it in one of two ways:
 - "RECEIPT: " followed by the result itself in at most 3 short lines. If he asked a question, that is the answer with its facts, numbers or list, not a description of what you did. If you changed something, say what changed and where he can check it.
 - "ASK: " followed by one question, only when you truly cannot go on without him: you need his yes for something risky or outward (sending, posting, paying, deleting), or the answer exists nowhere you can look. Never ask what you can find out yourself from files, tools, the TOPC brain or past sessions; decide, say what you assumed, and finish the work."""
+
+
+def guidance(job):
+    """What every thread works by: Kamal's goals, what he has already said yes to, and how hard to try."""
+    st = job["settings"]
+    goals = (st.get("goals") or "").strip()
+    perms = "\n".join(f"- {p}" for p in st.get("permissions") or [])
+    return ("\n\n" + (f"Kamal's goals, to decide by when he isn't there to ask:\n{goals}\n\n" if goals else "") +
+            (f"Kamal has already said yes, always, to these; do them without asking again:\n{perms}\n\n" if perms else "") +
+            "Don't give up when one way fails: try other routes (other tools, the CLI, the mini's browser, past sessions, the brain) "
+            "until the result he wants is reached, carefully, and only stop for a yes on something outward or risky.\n"
+            "Use the skill made for the work before doing it: public copy and posts go through topc-marketing and the CMO flow, "
+            "co-founders and distribution through founderbot, buying through shop, TOPC work through topc-task-first; read a site's "
+            "rules before posting there.")
 
 
 def config():
@@ -180,7 +194,7 @@ def answer(job):
               "Sources, in order: the whole picture below (threads here and his Claude desktop sessions), the past conversations below, "
               "then the TOPC brain (Basic Memory, project \"topc\"). If none has it, say so in one line.\n\n"
               f"The whole picture right now:\n{overview(job, sessions)}\n\nRecent conversation here:\n{recent(job)}\n\n"
-              f"Past conversations whose titles match:\n{notes or '(none)'}\n\nKamal's question: {job['text']}")
+              f"Past conversations whose titles match:\n{notes or '(none)'}\n\nKamal's question: {job['text']}" + guidance(job))
     out, _ = claude(prompt, os.path.join(DEV, "topc"), MODELS[job["settings"]["main"]])
     event(kind="claude", text=out.strip(), re=job["re"],
           sessions=[{"title": s["title"], "cli": s["cli"], "cwd": s["cwd"], "active": s["active"]} for s in past[:3]])
@@ -205,7 +219,7 @@ def run_thread(job, t, text):
         try:
             # a reopened desktop session is forked, so the app's own copy stays as it was
             fork = t.pop("fork", False)
-            out, sid = claude(text, os.path.join(DEV, t["folder"]), MODELS[job["settings"]["threads"]], t.get("sessionId"), RECEIPT, fork=fork, tid=t["id"])
+            out, sid = claude(text, os.path.join(DEV, t["folder"]), MODELS[job["settings"]["threads"]], t.get("sessionId"), RECEIPT + guidance(job), fork=fork, tid=t["id"])
             t["sessionId"] = sid if fork else (t.get("sessionId") or sid)
             asked = (m.group(1).strip() if (m := re.search(r"^ASK:\s*([\s\S]+)$", out, re.M)) else None)
             receipt = (m.group(1) if (m := re.search(r"^RECEIPT:\s*([\s\S]+)$", out, re.M)) else out.strip().split("\n\n")[-1]).strip()[:500]
@@ -220,6 +234,33 @@ def run_thread(job, t, text):
             event(kind="receipt", thread=t["id"], text=t["receipt"], failed=t["state"] == "failed")
 
 
+def history(cli):
+    """A desktop session's recent turns, so a reopened thread shows where it was."""
+    files = glob.glob(os.path.join(HOME, ".claude/projects", "*", f"{cli}.jsonl"))
+    turns = []
+    for line in open(files[0], errors="ignore") if files else []:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if r.get("type") not in ("user", "assistant") or r.get("isSidechain"):
+            continue
+        c = (r.get("message") or {}).get("content")
+        text = c if isinstance(c, str) else " ".join(b.get("text", "") for b in c or [] if isinstance(b, dict) and b.get("type") == "text")
+        text = re.sub(r"<system-reminder>.*?</system-reminder>", "", text, flags=re.S).strip()
+        if text and not text.startswith("<"):
+            turns.append({"role": "user" if r["type"] == "user" else "claude", "text": text[:3000]})
+    return turns[-30:]
+
+
+def remember_always(job):
+    """A reply like "yes, always" to a thread's question becomes a standing permission."""
+    t = next((x for x in job["threads"] if x["id"] == job.get("quote")), None)
+    reply = re.sub(r"^(>.*\n?)+", "", job["text"]).strip().lower()
+    if t and t.get("ask") and re.search(r"\balways\b", reply) and re.match(r"(yes|yeah|yep|ok|okay|sure|go)\b", reply):
+        call("/api/relay/permission", {"text": t["ask"]}, timeout=30)
+
+
 def handle(job):
     print("job", job.get("re"), "revive" if job.get("revive") else "message", flush=True)
     try:
@@ -232,11 +273,12 @@ def handle(job):
             open(paths[-1], "wb").write(base64.b64decode(b64))
         if paths:
             job["text"] += "\n\n[Kamal attached images; look at them with the Read tool: " + ", ".join(paths) + "]"
+        remember_always(job)
         if job.get("revive"):
             p = job["revive"]
             t = {"id": f"{int(time.time() * 1000):x}", "name": p["title"][:60], "folder": p["cwd"] or os.path.join(DEV, "topc"),
                  "state": "queued", "sessionId": p["cli"], "fork": True}
-            save_thread(t)
+            save_thread(t, history(p["cli"]))
             event(kind="ack", thread=t["id"], fresh=True, re=job["re"])
             return run_thread(job, t, "Kamal reopened this conversation from Unwall. In at most 3 lines: where it was left, and what is next.")
         r = route(job)
@@ -259,15 +301,25 @@ def handle(job):
             pass
 
 
+STOP = threading.Event()
+
+
 def main():
-    while True:
+    # an update or restart (SIGTERM from launchd) stops taking work and lets running threads finish first
+    signal.signal(signal.SIGTERM, lambda *_: STOP.set())
+    workers = []
+    while not STOP.is_set():
         try:
             status, job = call("/api/relay/next")
-            if status == 200 and job:
+            if status == 200 and job and not STOP.is_set():
                 call("/api/relay/ack", {"re": job["re"]}, timeout=30)  # or the box hands it out again
-                threading.Thread(target=handle, args=(job,), daemon=True).start()
+                w = threading.Thread(target=handle, args=(job,))
+                w.start(); workers.append(w)
+            workers = [w for w in workers if w.is_alive()]
         except (urllib.error.URLError, OSError, ValueError):
-            time.sleep(30)  # box or network down (Wi-Fi off, Cloudflare unreachable): back off, don't spin
+            STOP.wait(30)  # box or network down (Wi-Fi off, Cloudflare unreachable): back off, don't spin
+    for w in workers:
+        w.join()
 
 
 if __name__ == "__main__":

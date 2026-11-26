@@ -36,7 +36,7 @@ export class Box extends DurableObject {
     if (p === '/api/one' && req.method === 'GET') {
       const after = Number(url.searchParams.get('after') || 0);
       const threads = Object.fromEntries(Object.entries(s.threads).map(([k, t]) => [k, {...t, log: undefined}]));
-      return json({stream: s.stream.filter(x => x.id > after), threads, settings: s.settings, airOnline: Date.now() - this.seen < 120000, usage: s.usage});
+      return json({stream: s.stream.filter(x => x.id > after), threads, settings: s.settings, airOnline: Date.now() - this.seen < 120000, usage: s.usage, seen: s.seenIds || []});
     }
     if (p === '/api/one' && req.method === 'POST') {
       const {text, quote, revive, images} = await body();
@@ -48,9 +48,17 @@ export class Box extends DurableObject {
       await this.save(); this.wake();
       return json({ok: true}, 202);
     }
+    // cards Kamal has dealt with (read, answered, cleared) leave the "for you" strip
+    if (p === '/api/one/seen' && req.method === 'POST') {
+      const {ids} = await body();
+      s.seenIds = [...new Set([...(s.seenIds || []), ...(ids || []).map(Number)])].slice(-1000);
+      await this.save(); return json({ok: true});
+    }
     if (p === '/api/one/settings' && req.method === 'POST') {
       const b = await body();
       for (const k of ['main', 'threads']) if (['Haiku', 'Sonnet', 'Opus'].includes(b[k])) s.settings[k] = b[k];
+      if (typeof b.goals === 'string') s.settings.goals = b.goals.slice(0, 4000);
+      if (Array.isArray(b.permissions)) s.settings.permissions = b.permissions.filter(x => typeof x === 'string').slice(0, 100);
       await this.save(); return json(s.settings);
     }
     const m = p.match(/^\/api\/one\/thread\/(\w+)(\/close)?$/);
@@ -88,6 +96,13 @@ export class Box extends DurableObject {
       u.tokens += tokens; u.cost += cost;
       const t = s.threads[thread];
       if (t) { t.tokens = (t.tokens || 0) + tokens; t.cost = (t.cost || 0) + cost }
+      await this.save(); return json({ok: true});
+    }
+    // a "yes, always" answer becomes a standing permission every thread is given
+    if (p === '/api/relay/permission' && req.method === 'POST') {
+      const {text} = await body();
+      const list = s.settings.permissions ||= [];
+      if (text && !list.includes(text)) list.push(String(text).slice(0, 300));
       await this.save(); return json({ok: true});
     }
     if (p === '/api/relay/ack' && req.method === 'POST') {
