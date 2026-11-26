@@ -25,7 +25,7 @@ export class Box extends DurableObject {
   }
   save() { return this.ctx.storage.put('s', this.s) }
   push(item) { const it = {id: ++this.s.seq, at: Date.now(), ...item}; this.s.stream.push(it); this.s.stream = this.s.stream.slice(-500); return it }
-  wake() { const w = this.waiters; this.waiters = []; w.forEach(r => r()) }
+  wake() { const w = this.waiters; this.waiters = []; w.forEach(r => r(false)) }
 
   async fetch(req) {
     await this.ready;
@@ -61,14 +61,24 @@ export class Box extends DurableObject {
     // the relay on Kamal's Mac
     if (p === '/api/relay/next') {
       this.seen = Date.now();
-      if (!s.inbox.length) await new Promise(r => { this.waiters.push(r); setTimeout(r, 50000) });
+      // a job handed to a relay that never confirmed it (it restarted mid-request) goes back in line
+      s.inflight ||= {};
+      for (const [re, j] of Object.entries(s.inflight)) if (Date.now() - j.given > 20000) { delete s.inflight[re]; s.inbox.unshift(j) }
+      if (!s.inbox.length) {
+        const stale = await new Promise(r => { this.waiters.forEach(w => w(true)); this.waiters = [r]; setTimeout(() => r(false), 50000) });
+        if (stale) return new Response(null, {status: 204});
+      }
       this.seen = Date.now();
       const job = s.inbox.shift();
       if (!job) return new Response(null, {status: 204});
+      s.inflight[job.re] = {...job, given: Date.now()};
       await this.save();
       // everything the relay needs to route and answer, without a second round trip
       const threads = Object.values(s.threads).map(t => ({...t, log: undefined}));
       return json({...job, settings: s.settings, threads, recent: s.stream.slice(-12)});
+    }
+    if (p === '/api/relay/ack' && req.method === 'POST') {
+      const {re} = await body(); delete (s.inflight ||= {})[re]; await this.save(); return json({ok: true});
     }
     if (p === '/api/relay/event' && req.method === 'POST') {
       const e = await body();

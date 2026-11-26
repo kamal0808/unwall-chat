@@ -204,6 +204,7 @@ def run_thread(job, t, text):
 
 
 def handle(job):
+    print("job", job.get("re"), "revive" if job.get("revive") else "message", flush=True)
     try:
         if job.get("revive"):
             p = job["revive"]
@@ -237,6 +238,7 @@ def main():
         try:
             status, job = call("/api/relay/next")
             if status == 200 and job:
+                call("/api/relay/ack", {"re": job["re"]}, timeout=30)  # or the box hands it out again
                 threading.Thread(target=handle, args=(job,), daemon=True).start()
         except (urllib.error.URLError, OSError, ValueError):
             time.sleep(30)  # box or network down (Wi-Fi off, Cloudflare unreachable): back off, don't spin
