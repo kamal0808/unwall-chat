@@ -7,10 +7,10 @@
 <style>
 :root {
   --bg: #f6f4ee; --ink: #1f1e1b; --muted: #6f6b62; --line: #e2ded2; --bubble: #e9e5d9;
-  --accent: #c96442; --card: #fffdf8; --ok: #3f7d4e; --warn: #b7791f;
+  --accent: #c96442; --link: #a8472a; --card: #fffdf8; --ok: #3f7d4e; --warn: #b7791f;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #1f1e1c; --ink: #ece9e1; --muted: #a39e93; --line: #34332e; --bubble: #2b2a26; --card: #262522; --ok: #6fbf80; --warn: #e0b04a; }
+  :root { --bg: #1f1e1c; --ink: #ece9e1; --muted: #a39e93; --line: #34332e; --bubble: #2b2a26; --card: #262522; --link: #f0a283; --ok: #6fbf80; --warn: #e0b04a; }
 }
 * { box-sizing: border-box; }
 body { margin: 0; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); font: 15px/1.6 Geist, system-ui, sans-serif; }
@@ -76,6 +76,7 @@ h1 small { font: 12px system-ui; color: var(--muted); margin-left: 8px; }
 .receipt .t, .receipt .open { line-height: 1.6; }
 .re { font-size: 12px; color: var(--muted); margin: 0 0 2px; }
 .past { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+a, a:visited { color: var(--link); text-underline-offset: 2px; }
 .past a { font-size: 12px; }
 .receipt .open { color: var(--accent); font-size: 13px; white-space: nowrap; }
 .batch-items { display: none; flex-direction: column; gap: 8px; padding-left: 14px; border-left: 2px solid var(--line); }
