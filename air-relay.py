@@ -182,13 +182,18 @@ def overview(job, all_sessions):
 
 def route(job):
     """Where a message goes: an answer, an existing thread, or a new thread in a folder."""
-    if job.get("quote") and any(t["id"] == job["quote"] for t in job["threads"]):
-        return {"go": "thread", "id": job["quote"]}
+    pinned = next((t for t in job["threads"] if t["id"] == job.get("quote")), None)
+    # an answer to a thread's own words (Answer, Yes/No, a quote) always goes back to it; plain Reply mode is only a hint
+    if pinned and job["text"].lstrip().startswith(">"):
+        return {"go": "thread", "id": pinned["id"]}
     line = lambda t: f'- id {t["id"]}: "{t["name"]}" in ~/dev/{t["folder"]}, {"closed" if t.get("closed") else t.get("state")}: {(t.get("ask") or t.get("receipt") or t.get("last") or "")[:160]}'
     folders = ", ".join(sorted(d for d in os.listdir(DEV) if os.path.isdir(os.path.join(DEV, d)) and not d.startswith((".", "_"))))
     prompt = ("You route Kamal's messages. Send a message to a thread only when it is about that thread's own subject; use the recent "
               "conversation to tell what \"it\" or \"that\" means. Questions about the overall picture (what is running, how many sessions "
               "or threads, what is waiting, what was decided, where something was left) are answers, even right after a thread's work.\n\n"
+              "A new problem, product or service that a thread's name and work don't cover is a new topic, even right after that thread "
+              "spoke. When unsure, start a new thread.\n\n" +
+              (f'Kamal had Reply open on thread {pinned["id"]} ("{pinned["name"]}"): prefer it only if the message is about that thread\'s subject.\n\n' if pinned else "") +
               f"Recent conversation:\n{recent(job)}\n\nThreads:\n" + ("\n".join(map(line, job["threads"][-15:])) or "(none)") +
               f"\n\nProject folders in ~/dev: {folders}\nThis box itself (its page, design, bubble, behaviour) is the folder unwall-chat.\n\nKamal's new message:\n\"\"\"{job['text']}\"\"\"\n\n"
               'Reply with JSON only, one of:\n{"go":"thread","id":"<thread id>"} when it continues a thread\'s work (a closed one gets reopened)\n'
@@ -232,6 +237,7 @@ def brief(job):
 
 
 LOCKS = {}
+LOOKUP = re.compile(r"\b(want me to|should i|shall i|do you want me to|can i|may i)\b[^?]*\b(look|check|find|search|research|compare|pull|get|dig|see)\b", re.I)
 
 
 def run_thread(job, t, text):
@@ -243,6 +249,10 @@ def run_thread(job, t, text):
             out, sid = claude(text, os.path.join(DEV, t["folder"]), MODELS[job["settings"]["threads"]], t.get("sessionId"), RECEIPT + guidance(job) + goals_rule(t), fork=fork, tid=t["id"])
             t["sessionId"] = sid if fork else (t.get("sessionId") or sid)
             asked = (m.group(1).strip() if (m := re.search(r"^ASK:\s*([\s\S]+)$", out, re.M)) else None)
+            if asked and LOOKUP.search(asked):  # an offer to look something up isn't a question for Kamal: send it back to do it
+                out, _ = claude(f"Don't ask Kamal that; do it now: {asked}\nThen give him the answer itself.", os.path.join(DEV, t["folder"]),
+                                MODELS[job["settings"]["threads"]], t["sessionId"], RECEIPT + guidance(job) + goals_rule(t), tid=t["id"])
+                asked = (m.group(1).strip() if (m := re.search(r"^ASK:\s*([\s\S]+)$", out, re.M)) else None)
             if (m := re.search(r"^CROSS:\s*(.+?)\s*\|\s*(.+)$", out, re.M)):
                 other = "work" if side(t) == "personal" else "personal"
                 t["cross"] = {"query": m.group(1).strip()[:200], "why": m.group(2).strip()[:300], "to": other}
