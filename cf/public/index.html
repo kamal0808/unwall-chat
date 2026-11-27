@@ -333,7 +333,9 @@ async function answerQ(q, words) {
 }
 // shortcut: a question that opens with a yes/no verb and has no "or" gets Yes/No buttons; upgrade if the relay should flag it itself
 const YES_NO = /^(can|could|should|shall|do|does|did|is|are|was|will|would|may|have|has|ok|okay)\b(?![\s\S]*\bor\b)[\s\S]*\?\s*$/i;
-let pending = []; // images waiting to be sent: data URLs, already shrunk
+const box = {main: {list: [], thumbs: 'thumbs', form: 'form'}, panel: {list: [], thumbs: 'pthumbs', form: 'pform'}};
+let where = 'main'; // which box the next picked, pasted or dropped file goes to
+const inPanel = el => !!el?.closest?.('#panel'); // images waiting to be sent: data URLs, already shrunk
 function shrink(file) {
   return new Promise(ok => {
     const img = new Image(), url = URL.createObjectURL(file);
@@ -349,15 +351,17 @@ function shrink(file) {
 }
 // shortcut: non-image files ride as data URLs with ;name=, capped near 1.3 MB by the Worker; upgrade to R2 for bigger ones
 const readFile = f => new Promise(ok => { const r = new FileReader(); r.onload = () => ok(r.result.replace(';base64,', ';name=' + encodeURIComponent(f.name) + ';base64,')); r.onerror = () => ok(null); r.readAsDataURL(f) });
-async function addImages(files) {
+async function addImages(files, w = where) {
+  const pending = box[w].list;
   for (const f of [...files].slice(0, 4 - pending.length)) {
     const d = f.type.startsWith('image/') ? await shrink(f) : await readFile(f);
     if (d && d.length < 1.8e6) pending.push(d); else alert(f.name + ' is too big to attach (limit about 1.3 MB).');
   }
-  drawThumbs();
+  drawThumbs(w);
 }
-const drawThumbs = () => $('thumbs').innerHTML = $('pthumbs').innerHTML = pending.map((d, i) => `<span class="thumb">${d.startsWith('data:image/') ? `<img src="${d}" alt="Attached image ${i + 1}">` : `<span class="fchip">${esc(decodeURIComponent((d.match(/;name=([^;]*)/) || [])[1] || 'file'))}</span>`}<button type="button" data-rm="${i}" aria-label="Remove attachment">×</button></span>`).join('');
-$('attach').onclick = $('pattach').onclick = () => $('picker').click();
+const drawThumbs = w => $(box[w].thumbs).innerHTML = box[w].list.map((d, i) => `<span class="thumb">${d.startsWith('data:image/') ? `<img src="${d}" alt="Attached image ${i + 1}">` : `<span class="fchip">${esc(decodeURIComponent((d.match(/;name=([^;]*)/) || [])[1] || 'file'))}</span>`}<button type="button" data-rm="${i}" aria-label="Remove attachment">×</button></span>`).join('');
+$('attach').onclick = () => { where = 'main'; $('picker').click() };
+$('pattach').onclick = () => { where = 'panel'; $('picker').click() };
 $('picker').onchange = e => { addImages(e.target.files); e.target.value = '' };
 const all = [], seen = new Set();
 const markSeen = ids => { ids = ids.filter(id => !seen.has(id)); if (!ids.length) return; ids.forEach(id => seen.add(id)); needs(); fetch('/api/one/seen', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({ids})}) };
@@ -479,29 +483,29 @@ const drawQuote = () => $('quotes').innerHTML = quote ? `<div class="quote"><spa
 $('form').onsubmit = async e => {
   e.preventDefault();
   let text = $('input').value.trim();
-  if (!text && !quote?.text && !pending.length) return;
+  if (!text && !quote?.text && !box.main.list.length) return;
   if (quote?.text) text = `> ${quote.text.replace(/\n/g, '\n> ')}\n\n${text}`;
-  const q = quote?.thread, images = pending; quote = null; pending = []; drawQuote(); drawThumbs(); $('input').value = ''; grow();
+  const q = quote?.thread, images = box.main.list; quote = null; box.main.list = []; drawQuote(); drawThumbs('main'); $('input').value = ''; grow();
   await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text, quote: q, images})});
   setTimeout(poll, 150);
 };
 $('pform').onsubmit = async e => {
   e.preventDefault();
-  const text = $('pinput').value.trim(), images = pending;
+  const text = $('pinput').value.trim(), images = box.panel.list;
   if (!openK || (!text && !images.length)) return;
-  pending = []; drawThumbs(); $('pinput').value = '';
+  box.panel.list = []; drawThumbs('panel'); $('pinput').value = '';
   await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text, quote: openK, images})});
   setTimeout(() => { poll(); openThread(openK) }, 300);
 };
 $('pinput').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('pform').requestSubmit() } };
 const grow = () => { const i = $('input'); i.style.height = 'auto'; i.style.height = Math.min(i.scrollHeight, 220) + 'px' };
 $('input').addEventListener('input', grow);
-$('pform').addEventListener('paste', e => { if ([...e.clipboardData.files].some(f => f.type.startsWith('image/'))) { e.preventDefault(); addImages(e.clipboardData.files) } });
-$('form').addEventListener('paste', e => { if ([...e.clipboardData.files].some(f => f.type.startsWith('image/'))) { e.preventDefault(); addImages(e.clipboardData.files) } });
-const dropOn = on => { $('form').classList.toggle('drop', on); $('pform').classList.toggle('drop', on) };
-document.addEventListener('dragover', e => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); dropOn(true) } });
-document.addEventListener('dragleave', e => { if (!e.relatedTarget) dropOn(false) });
-document.addEventListener('drop', e => { dropOn(false); if (e.dataTransfer.files.length) { e.preventDefault(); addImages(e.dataTransfer.files) } });
+$('pform').addEventListener('paste', e => { if ([...e.clipboardData.files].some(f => f.type.startsWith('image/'))) { e.preventDefault(); addImages(e.clipboardData.files, 'panel') } });
+$('form').addEventListener('paste', e => { if ([...e.clipboardData.files].some(f => f.type.startsWith('image/'))) { e.preventDefault(); addImages(e.clipboardData.files, 'main') } });
+const dropOn = w => ['main', 'panel'].forEach(k => $(box[k].form).classList.toggle('drop', k === w));
+document.addEventListener('dragover', e => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); dropOn(inPanel(e.target) ? 'panel' : 'main') } });
+document.addEventListener('dragleave', e => { if (!e.relatedTarget) dropOn(null) });
+document.addEventListener('drop', e => { dropOn(null); if (e.dataTransfer.files.length) { e.preventDefault(); addImages(e.dataTransfer.files, inPanel(e.target) ? 'panel' : 'main') } });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && e.target.closest?.('.own')) { e.preventDefault(); e.target.nextElementSibling.click() } });
 $('input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('form').requestSubmit() } };
 
@@ -519,7 +523,7 @@ document.body.addEventListener('click', async e => {
   const c = e.target.closest('[data-close]'); if (c) { await fetch(`/api/one/thread/${c.dataset.close}/close`, {method: 'POST'}); $('panel').classList.remove('open'); openK = null; return poll() }
   const rv = e.target.closest('[data-revive]');
   if (rv) { const p = JSON.parse(rv.dataset.revive); await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `Reopen "${p.title}"`, revive: p})}); setTimeout(poll, 150); return }
-  const rm = e.target.closest('[data-rm]'); if (rm) { pending.splice(+rm.dataset.rm, 1); return drawThumbs() }
+  const rm = e.target.closest('[data-rm]'); if (rm) { const w = inPanel(rm) ? 'panel' : 'main'; box[w].list.splice(+rm.dataset.rm, 1); return drawThumbs(w) }
   const cr = e.target.closest('[data-cross]');
   if (cr) { const [id, how] = cr.dataset.cross.split('|'); await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: how === 'allow' ? 'Allow once' : 'No', quote: id, cross: how})}); setTimeout(poll, 150); return }
   const qp = e.target.closest('[data-qpick]'); if (qp) { const [id, i] = qp.dataset.qpick.split('|'); return answerQ(QS[id], QS[id].opts[i].label) }
