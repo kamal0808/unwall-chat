@@ -211,7 +211,8 @@ def route(job):
               '{"go":"new","name":"<2-4 word topic>","folder":"<one folder from the list, or topc if none fits>"} for work on a new topic\n'
               '{"go":"answer"} for a question about the overall picture or about what was decided or where something stands, which needs no work in a project')
     try:
-        out, _ = claude(prompt, os.path.join(DEV, "topc"), MODELS[job["settings"]["main"]], tools="Read" if job.get("imgs") else False)
+        out, _ = claude(prompt, os.path.join(DEV, "topc"), MODELS[job["settings"]["main"]] if job.get("imgs") else "haiku",  # Haiku misplaced screenshots
+                        tools="Read" if job.get("imgs") else False)
         r = json.loads(re.search(r"\{.*\}", out, re.S).group(0))
     except Exception:
         r = {}
@@ -432,19 +433,20 @@ HALT = threading.Event()
 
 
 def main():
-    # an update or restart (SIGTERM from launchd) stops taking work and lets running threads finish first
+    # an update or restart (SIGTERM from launchd) waits until no thread is running and keeps taking messages until then:
+    # a thread can run for an hour, and the box must not go deaf for that long
     signal.signal(signal.SIGTERM, lambda *_: HALT.set())
     workers = []
-    while not HALT.is_set():
+    while not HALT.is_set() or any(w.is_alive() for w in workers):
         try:
             status, job = call("/api/relay/next")
-            if status == 200 and job and not HALT.is_set():
+            if status == 200 and job:
                 call("/api/relay/ack", {"re": job["re"]}, timeout=30)  # or the box hands it out again
                 w = threading.Thread(target=handle, args=(job,))
                 w.start(); workers.append(w)
             workers = [w for w in workers if w.is_alive()]
         except (urllib.error.URLError, OSError, ValueError):
-            HALT.wait(30)  # box or network down (Wi-Fi off, Cloudflare unreachable): back off, don't spin
+            time.sleep(30)  # box or network down (Wi-Fi off, Cloudflare unreachable): back off, don't spin
     for w in workers:
         w.join()
 
