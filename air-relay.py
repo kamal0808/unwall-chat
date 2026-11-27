@@ -102,8 +102,8 @@ def claude(prompt, cwd, model, resume=None, append=None, tools=True, fork=False,
         cmd += ["--append-system-prompt", append]
     if resume:
         cmd += ["--resume", resume] + (["--fork-session"] if fork else [])
-    if not tools:
-        cmd += ["--tools", ""]
+    if tools is not True:
+        cmd += ["--tools", tools or ""]
     p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=1800)
     r = json.loads(p.stdout or "{}")
     if p.returncode or r.get("is_error"):
@@ -197,14 +197,18 @@ def route(job):
               "or threads, what is waiting, what was decided, where something was left) are answers, even right after a thread's work.\n\n"
               "A new problem, product or service that a thread's name and work don't cover is a new topic, even right after that thread "
               "spoke. When unsure, start a new thread.\n\n" +
-              (f'Kamal had Reply open on thread {pinned["id"]} ("{pinned["name"]}"): prefer it only if the message is about that thread\'s subject.\n\n' if pinned else "") +
+              (f'Kamal had Reply open on thread {pinned["id"]} ("{pinned["name"]}"): prefer it only if the message is about that thread\'s subject. A short reaction ("ok", "it works", "do you see this?") is about that thread unless its words or attachments clearly show another subject.\n\n' if pinned else "") +
               f"Recent conversation:\n{recent(job)}\n\nThreads:\n" + ("\n".join(map(line, job["threads"][-15:])) or "(none)") +
-              f"\n\nProject folders in ~/dev: {folders}\nThis box itself (its page, design, bubble, behaviour) is the folder unwall-chat.\n\nKamal's new message:\n\"\"\"{job['text']}\"\"\"\n\n"
+              f"\n\nProject folders in ~/dev: {folders}\nThis box itself (its page, design, bubble, behaviour) is the folder unwall-chat.\n"
+              "If the message has attached files or images, read them before deciding: they show what it is about. A question or complaint "
+              "about this box's own screen (its buttons, cards, panels, lists, routing), even when the cards on it belong to other "
+              "threads, is about the box, not about those threads: send it to a thread in unwall-chat or start one there.\n\n"
+              f"Kamal's new message:\n\"\"\"{job['text']}\"\"\"\n\n"
               'Reply with JSON only, one of:\n{"go":"thread","id":"<thread id>"} when it continues a thread\'s work (a closed one gets reopened)\n'
               '{"go":"new","name":"<2-4 word topic>","folder":"<one folder from the list, or topc if none fits>"} for work on a new topic\n'
               '{"go":"answer"} for a question about the overall picture or about what was decided or where something stands, which needs no work in a project')
     try:
-        out, _ = claude(prompt, os.path.join(DEV, "topc"), MODELS[job["settings"]["main"]], tools=False)
+        out, _ = claude(prompt, os.path.join(DEV, "topc"), MODELS[job["settings"]["main"]], tools="Read" if job.get("imgs") else False)
         r = json.loads(re.search(r"\{.*\}", out, re.S).group(0))
     except Exception:
         r = {}
