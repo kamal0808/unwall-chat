@@ -279,6 +279,9 @@ const bubble = t => t.role === 'user'
   ? `<div class="you">${esc(t.text)}</div>`
   : `<div class="claude">${t.tools?.length ? `<p class="tools">Used ${t.tools.length} tools: ${esc([...new Set(t.tools)].join(', '))}</p>` : ''}${md(t.text.replace(/^(NEXT|ASK):[\s\S]*$/m, '').replace(/^(RECEIPT|ASK|NEXT):\s*/gm, '**$1:** '))}</div>`;
 function item(s) {
+  // an answer or reply sent to a thread lives in that thread; the main chat keeps one line
+  if (s.kind === 'you' && s.thread) { said[s.id] = s.text; toThread.add(s.id); return `<button class="ack qline" data-open="${s.thread}">You → <b>${esc(name(s.thread))}</b>: ${esc(s.text.replace(/^(> .*\n?)+\n*/, '').slice(0, 120))}</button>` }
+  if (s.kind === 'ack' && toThread.has(s.re)) return '';
   if (s.kind === 'you') { said[s.id] = s.text; const q = s.text.match(/^((?:> .*\n?)+)\n*([\s\S]*)$/), pic = s.images ? `<div class="re">📎 ${s.images} image${s.images > 1 ? 's' : ''}</div>` : ''; return q ? `<div class="you"><blockquote>${esc(q[1].replace(/^> /gm, ''))}</blockquote>${esc(q[2])}${pic}</div>` : `<div class="you">${esc(s.text)}${pic}</div>` }
   if (s.kind === 'claude') {
     const re = s.re && s.re !== lastId && said[s.re] ? `<p class="re">↳ re: “${esc(said[s.re].slice(0, 90))}${said[s.re].length > 90 ? '…' : ''}”</p>` : '';
@@ -293,6 +296,7 @@ function item(s) {
   return '';
 }
 let lastId = 0;
+const toThread = new Set();
 const QS = {};
 function qcard(s) {
   const opts = s.options?.length ? s.options : YES_NO.test(s.text) ? [{label: 'Yes'}, {label: 'No'}] : [];
