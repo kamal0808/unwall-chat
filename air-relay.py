@@ -16,9 +16,12 @@ MODELS = {"Haiku": "haiku", "Sonnet": "sonnet", "Opus": "opus"}
 # PeopleWiz folders sign in with their own Claude account, as Kamal's shell does
 OTHER_ACCOUNT = {"dashoz": "~/.claude-peoplewiz-info", "peoplewiz": "~/.claude-peoplewiz-info"}
 SESSIONS = os.path.join(HOME, "Library/Application Support/Claude/claude-code-sessions")
-RECEIPT = """Kamal reads only the end of your reply. End it like this:
+RECEIPT = """Finish the whole job in this one turn, as a colleague handed it and left alone would: do every step yourself, try another route when one fails, check the result, and take the time it needs (half an hour is fine). Don't stop to report progress, offer the next step, or ask whether or where to start: read, research, draft, build and test without asking, and when there are several ways, pick one, say which, and carry on. If he asked to talk something through, talk.
+Stop before the job is done only when every step left needs Kamal himself: his yes before sending, posting, paying, deleting or changing something live (unless he already said yes, always), his login, CAPTCHA, phone or card, or a fact only he has. Do everything else first, then ask for all of it at once.
+
+Kamal reads only the end of your reply. End it like this:
 RECEIPT: the result itself in at most 3 short lines. If he asked a question, that is the answer with its facts, numbers or list, not a description of what you did. If you changed something, say what changed and where he can check it.
-Then, only when the next move is a decision that is his (his yes before sending, posting, paying or deleting; a choice between approaches or drafts), add:
+Then, only when you stopped because the next move needs him as above, add:
 NEXT: one short question
 CHOICES: {"mode": "next", "options": [{"label": "1-3 words", "note": "one line", "preview": "full draft text, only when choosing between drafts", "rec": true}]}
 mode "next" = 1-2 buttons, your pick first; "one" = pick one of 2-4; "many" = tick several. Put "rec": true on your pick. He can always type his own answer, so never add an "Other" option.
@@ -104,7 +107,7 @@ def claude(prompt, cwd, model, resume=None, append=None, tools=True, fork=False,
         cmd += ["--resume", resume] + (["--fork-session"] if fork else [])
     if tools is not True:
         cmd += ["--tools", tools or ""]
-    p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=1800)
+    p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=3600)
     r = json.loads(p.stdout or "{}")
     if p.returncode or r.get("is_error"):
         raise RuntimeError((r.get("result") or p.stderr or "claude failed")[-300:])
@@ -263,33 +266,70 @@ def next_step(out):
     return q, choices
 
 
-LOOKUP = re.compile(r"\b(want me to|should i|shall i|do you want me to|can i|may i)\b[^?]*\b(look|check|find|search|research|compare|pull|get|dig|see)\b", re.I)
+PUSHES = 3  # times a thread is sent back to work before its question reaches Kamal anyway
+PUSH = ("Kamal isn't there to answer that, and it doesn't need him: \"{}\"\nCarry on and finish the job. Where you offered choices, "
+        "pick one and say which. Never send, post, pay, delete, change anything live or use his passwords, tokens or keys without his "
+        "yes, unless he already said yes, always. Come back only when the job is done or all that's left needs him.")
+
+
+def receipt_of(out):
+    body = re.split(r"^(?:NEXT|ASK|CHOICES):", out, maxsplit=1, flags=re.M)[0]
+    return (m.group(1) if (m := re.search(r"^RECEIPT:\s*([\s\S]+)$", body, re.M)) else body.strip().split("\n\n")[-1]).strip()[:500]
+
+
+def needs_him(job, asked, receipt):
+    """False when a thread stopped to ask about something it could have settled or done itself."""
+    perms = "\n".join(f"- {p}" for p in job["settings"].get("permissions") or []) or "(nothing)"
+    prompt = ("A worker doing a job for Kamal stopped to ask him a question. He wants jobs finished without him.\n"
+              f"His message: \"\"\"{job['text']}\"\"\"\nThe worker's result so far: \"\"\"{receipt}\"\"\"\nThe question: \"\"\"{asked}\"\"\"\n"
+              f"He already said yes, always, to:\n{perms}\n\n"
+              "Sort the question into the FIRST kind that fits:\n"
+              "A: asks Kamal to do something himself: log in, solve a CAPTCHA, fill or check something in his own browser or phone, pay with "
+              "his card, send a screenshot or say what he sees.\n"
+              "B: asks to use his passwords, tokens or keys.\n"
+              "C: asks his yes before sending, posting, filing, paying, deleting, creating an account or changing something live, and no yes "
+              "above covers it.\n"
+              "D: asks for a fact or personal taste only he has, which no file, tool or sensible default can settle, or he asked to discuss "
+              "or think it through together.\n"
+              "E: none of those: offering to do more, asking whether, where or in which order to start, permission to read, research, draft, "
+              "build or test, a choice the worker can make and tell him, or a yes already given above.\nReply with the letter only.")
+    try:
+        out, _ = claude(prompt, os.path.join(DEV, "topc"), "sonnet", tools=False)
+    except Exception:
+        return True  # when in doubt he is asked
+    return not out.strip().upper().startswith("E")
 
 
 def run_thread(job, t, text):
     with LOCKS.setdefault(t["id"], threading.Lock()):  # one message at a time per thread
         t.update(state="working", last=text[:80]); save_thread(t)
+        outs = []
         try:
             # a reopened desktop session is forked, so the app's own copy stays as it was
             fork = t.pop("fork", False)
             out, sid = claude(text, os.path.join(DEV, t["folder"]), MODELS[job["settings"]["threads"]], t.get("sessionId"), RECEIPT + guidance(job) + goals_rule(t), fork=fork, tid=t["id"])
             t["sessionId"] = sid if fork else (t.get("sessionId") or sid)
+            outs.append(out)
             asked, choices = next_step(out)
-            if asked and LOOKUP.search(asked):  # an offer to look something up isn't a question for Kamal: send it back to do it
-                out, _ = claude(f"Don't ask Kamal that; do it now: {asked}\nThen give him the answer itself.", os.path.join(DEV, t["folder"]),
-                                MODELS[job["settings"]["threads"]], t["sessionId"], RECEIPT + guidance(job) + goals_rule(t), tid=t["id"])
+            for _ in range(PUSHES):
+                # a reopened conversation only reports where it was left, so it is never pushed on
+                if not asked or job.get("revive") or re.search(r"^CROSS:", out, re.M) or needs_him(job, asked, receipt_of(out)):
+                    break
+                try:
+                    out, _ = claude(PUSH.format(asked), os.path.join(DEV, t["folder"]), MODELS[job["settings"]["threads"]], t["sessionId"],
+                                    RECEIPT + guidance(job) + goals_rule(t), tid=t["id"])
+                except Exception:
+                    break  # keep the answer already in hand
+                outs.append(out)
                 asked, choices = next_step(out)
             if (m := re.search(r"^CROSS:\s*(.+?)\s*\|\s*(.+)$", out, re.M)):
                 other = "work" if side(t) == "personal" else "personal"
                 t["cross"] = {"query": m.group(1).strip()[:200], "why": m.group(2).strip()[:300], "to": other}
                 asked = f"Wants to look at your {other} goals about \"{t['cross']['query']}\": {t['cross']['why']}"
-            body = re.split(r"^(?:NEXT|ASK|CHOICES):", out, maxsplit=1, flags=re.M)[0]
-            receipt = (m.group(1) if (m := re.search(r"^RECEIPT:\s*([\s\S]+)$", body, re.M)) else body.strip().split("\n\n")[-1]).strip()[:500]
-            t.update(receipt=receipt, ask=asked[:400] if asked else None, choices=choices if asked else None, state="needs" if asked else "done")
+            t.update(receipt=receipt_of(out),ask=asked[:400] if asked else None, choices=choices if asked else None, state="needs" if asked else "done")
         except Exception as e:
-            out = ""
             t.update(state="failed", ask=None, receipt=f"failed: {str(e)[:120]}")
-        save_thread(t, [{"role": "user", "text": text}, {"role": "claude", "text": out}] if out else [{"role": "user", "text": text}])
+        save_thread(t, [{"role": "user", "text": text}] + [{"role": "claude", "text": o} for o in outs if o])
         # the result always shows; a question for Kamal follows it as its own card
         if t.get("receipt") and not (t.get("cross") and t.get("ask")):
             event(kind="receipt", thread=t["id"], text=t["receipt"], failed=t["state"] == "failed")
