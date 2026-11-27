@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+<title>Conversation map</title>
+<style>
+:root{--bg:#faf8f4;--card:#fff;--ink:#1f1d1a;--dim:#77716a;--line:#d8d2c8;--me:#e8590c;--ai:#3b6fd4;--hub:#c96442}
+@media (prefers-color-scheme:dark){:root{--bg:#161513;--card:#211f1c;--ink:#ece8e1;--dim:#9a948b;--line:#403c36;--me:#ff7a30;--ai:#6d9bf0}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:13px/1.45 -apple-system,system-ui,sans-serif;overflow:hidden}
+svg{position:fixed;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+svg.drag{cursor:grabbing}
+.edge{fill:none;stroke:var(--line);stroke-width:1.5;vector-effect:non-scaling-stroke}
+.edge.guess{stroke-dasharray:5 5}
+.k{fill:var(--me)}
+.c{fill:var(--ai)}
+.c.mid{fill:var(--bg);stroke:var(--ai);stroke-width:1.5}
+.dot{cursor:pointer}
+.fork{fill:none;stroke:var(--ink);stroke-width:1.5;vector-effect:non-scaling-stroke}
+#sel{fill:none;stroke:var(--ink);stroke-width:2.5;vector-effect:non-scaling-stroke;pointer-events:none}
+.label{fill:var(--ink);cursor:pointer;paint-order:stroke;stroke:var(--bg);stroke-linejoin:round}
+.hub{cursor:pointer}
+.box{position:fixed;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 4px 18px #0002}
+#bar{left:12px;top:12px;padding:8px 10px;max-width:260px;max-height:calc(100% - 24px);overflow:auto}
+#bar summary{cursor:pointer;font-weight:600}
+#bar button.conv{display:block;width:100%;text-align:left;border:0;background:none;padding:3px 0;color:var(--ink)}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:6px;padding:3px 10px}
+button:disabled{opacity:.35;cursor:default}
+.key{display:flex;gap:6px;align-items:center;color:var(--dim)}
+.swatch{display:inline-block;border-radius:50%;width:10px;height:10px;background:var(--ai)}
+#tip{pointer-events:none;max-width:320px;padding:8px 10px;z-index:3;white-space:pre-wrap;overflow-wrap:anywhere}
+#panel{right:12px;top:12px;bottom:12px;width:min(400px,calc(100% - 24px));display:flex;flex-direction:column;z-index:2}
+#panel header{padding:10px 12px;border-bottom:1px solid var(--line)}
+#text{padding:12px;overflow:auto;flex:1;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+#panel footer{padding:8px 12px;border-top:1px solid var(--line);display:flex;gap:6px;flex-wrap:wrap}
+.who{font-weight:700}
+.dim{color:var(--dim)}
+[hidden]{display:none!important}
+@media (max-width:700px){#panel{top:45%;left:12px;width:auto}#bar{max-width:200px}}
+</style>
+</head>
+<body>
+<svg id="map" role="img" aria-label="Conversations going out from Claude"><g id="world"></g></svg>
+<div id="bar" class="box">
+  <details id="list"><summary>Conversations</summary><div id="convs"></div></details>
+  <div class="key"><span class="swatch" style="background:var(--me);width:13px;height:13px"></span>You</div>
+  <div class="key"><span class="swatch"></span>Claude's reply</div>
+  <div class="key"><span class="swatch" style="background:none;border:2px solid var(--ai);width:8px;height:8px"></span>Claude, mid-work</div>
+  <div style="margin-top:6px"><button id="out" aria-label="Zoom out">−</button> <button id="in" aria-label="Zoom in">+</button> <button id="fit">See all</button></div>
+  <div class="dim" style="margin-top:4px">Drag or two-finger scroll to move, pinch to zoom, arrows to walk.</div>
+</div>
+<div id="tip" class="box" hidden></div>
+<aside id="panel" class="box" hidden aria-live="polite">
+  <header><div><b id="title"></b></div><div id="meta" class="dim"></div></header>
+  <div id="text"></div>
+  <footer><button id="prev">← Earlier</button><button id="next">Later →</button><button id="close">Close</button><span id="links"></span></footer>
+</aside>
+<script type="application/json" id="data">__DATA__</script>
+<script>
+const STEP = 15, R0 = 220, FORK_GAP = 45;
+
+function layout(convs) {
+  const by = new Map(convs.map(c => [c.id, c]));
+  convs.forEach(c => c.kids = []);
+  const roots = convs.filter(c => !by.has(c.parent));
+  convs.forEach(c => by.has(c.parent) && by.get(c.parent).kids.push(c));
+  // earliest forks take the outermost lanes, so a fork's curve never crosses a later one
+  const lanes = c => {
+    const k = [...c.kids].sort((a, b) => a.forkAt - b.forkAt);
+    return [...k.filter((_, i) => i % 2 === 0).flatMap(lanes), c, ...k.filter((_, i) => i % 2).reverse().flatMap(lanes)];
+  };
+  const order = [];
+  roots.forEach(r => order.push(...lanes(r), null));
+  order.forEach((c, i) => c && (c.angle = -Math.PI / 2 + 2 * Math.PI * i / order.length));
+  const place = (c, start) => {
+    c.pts = c.msgs.map((_, i) => polar(start + i * STEP, c.angle));
+    c.start = start;
+    c.end = start + Math.max(0, c.msgs.length - 1) * STEP;
+    c.kids.forEach(k => place(k, start + Math.max(0, k.forkAt) * STEP + FORK_GAP));
+  };
+  roots.forEach(r => place(r, R0));
+  return { by, roots };
+}
+function polar(r, a) { return [r * Math.cos(a), r * Math.sin(a)]; }
+function curve(r1, a1, r2, a2) {
+  return Array.from({ length: 25 }, (_, i) => {
+    const t = i / 24, s = t * t * (3 - 2 * t);
+    return polar(r1 + (r2 - r1) * t, a1 + (a2 - a1) * s);
+  });
+}
+
+if (typeof document !== 'undefined') {
+  const $ = id => document.getElementById(id);
+  const convs = JSON.parse($('data').textContent);
+  const { by, roots } = layout(convs);
+  const svg = $('map'), world = $('world');
+  const el = (tag, attrs, parent = world) => {
+    const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    parent.appendChild(e);
+    return e;
+  };
+  const path = pts => 'M' + pts.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('L');
+
+  convs.forEach(c => {
+    const p = by.get(c.parent);
+    const from = p ? curve(p.start + c.forkAt * STEP, p.angle, c.start, c.angle) : [[0, 0]];
+    el('path', { class: 'edge' + (c.guessed ? ' guess' : ''), d: path([...from, polar(c.start, c.angle), polar(c.end, c.angle)]) });
+  });
+  const dots = [], labels = [];
+  convs.forEach(c => c.msgs.forEach((m, i) => {
+    const mid = m.w === 'c' && c.msgs[i + 1]?.w === 'c';
+    const d = el('circle', { class: 'dot ' + m.w + (mid ? ' mid' : ''), cx: c.pts[i][0], cy: c.pts[i][1] });
+    d.base = m.w === 'k' ? 7 : mid ? 3 : 5;
+    d.conv = c; d.i = i;
+    dots.push(d);
+  }));
+  convs.forEach(c => c.kids.forEach(k => c.pts[k.forkAt] && el('circle', { class: 'fork', cx: c.pts[k.forkAt][0], cy: c.pts[k.forkAt][1], r: 11 })));
+  const sel = el('circle', { id: 'sel', r: 0 });
+  convs.forEach(c => {
+    const t = el('text', { class: 'label', tabindex: 0 });
+    t.textContent = (c.title.length > 34 ? c.title.slice(0, 33) + '…' : c.title) + ' · ' + c.msgs.length;
+    t.conv = c;
+    t.onkeydown = e => e.key === 'Enter' && open(c, c.msgs.length - 1, true);
+    labels.push(t);
+  });
+  const hub = el('g', { class: 'hub' });
+  el('circle', { r: 48, fill: 'var(--hub)' }, hub);
+  const name = el('text', { 'text-anchor': 'middle', dy: 7, fill: '#fff', 'font-size': 21, 'font-weight': 700 }, hub);
+  name.textContent = 'Claude';
+
+  let x = 0, y = 0, z = 1, cur = null;
+  function draw() {
+    world.setAttribute('transform', `translate(${x} ${y}) scale(${z})`);
+    // dots and names keep a readable size on screen however far out you are
+    const grow = Math.max(1, .45 / z);
+    dots.forEach(d => d.setAttribute('r', d.base * grow));
+    labels.forEach(t => {
+      const c = t.conv, [px, py] = polar(c.end + 16 / z, c.angle), left = Math.cos(c.angle) < -.01;
+      const up = Math.abs(Math.cos(c.angle)) < .35;
+      t.setAttribute('x', px); t.setAttribute('y', py + (up && Math.sin(c.angle) > 0 ? 10 / z : 4 / z));
+      t.setAttribute('text-anchor', up ? 'middle' : left ? 'end' : 'start');
+      t.style.fontSize = 12 / z + 'px'; t.style.strokeWidth = 4 / z;
+    });
+    hub.setAttribute('transform', `scale(${Math.max(1, .46 / z)})`);
+    if (cur) {
+      const [cx, cy] = cur.c.pts[cur.i];
+      sel.setAttribute('cx', cx); sel.setAttribute('cy', cy); sel.setAttribute('r', 13 * grow);
+    } else sel.setAttribute('r', 0);
+  }
+  const room = () => cur && innerWidth > 700 ? innerWidth - 424 : innerWidth;
+  const tall = () => cur && innerWidth <= 700 ? innerHeight * .45 : innerHeight;
+  function frame(pts) {
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys);
+    z = Math.min(1.4, Math.max(room() - 560, room() * .5) / Math.max(w, 1), (tall() - 100) / Math.max(h, 1));
+    z = Math.max(z, .03);
+    x = room() / 2 - z * (Math.min(...xs) + w / 2);
+    y = tall() / 2 - z * (Math.min(...ys) + h / 2);
+    draw();
+  }
+  const fit = () => frame([[0, 0], ...convs.flatMap(c => [c.pts[0] || [0, 0], polar(c.end, c.angle)])]);
+  function zoom(f, mx = room() / 2, my = tall() / 2) {
+    const n = Math.min(6, Math.max(.03, z * f));
+    x = mx - (mx - x) * n / z; y = my - (my - y) * n / z; z = n;
+    draw();
+  }
+  const when = s => s ? new Date(s).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  const who = m => m.w === 'k' ? 'You' : 'Claude';
+  function open(c, i, move) {
+    if (!c.msgs[i]) return;
+    cur = { c, i };
+    const m = c.msgs[i];
+    $('panel').hidden = false;
+    $('title').textContent = c.title;
+    $('meta').textContent = `${who(m)} · message ${i + 1} of ${c.msgs.length} · ${when(m.at)}`;
+    $('meta').style.color = m.w === 'k' ? 'var(--me)' : 'var(--ai)';
+    $('text').textContent = m.t; $('text').scrollTop = 0;
+    $('prev').disabled = i === 0; $('next').disabled = i === c.msgs.length - 1;
+    const links = $('links'); links.textContent = '';
+    const go = (label, to, at) => {
+      const b = document.createElement('button');
+      b.textContent = label; b.onclick = () => open(to, at, true); links.append(b, ' ');
+    };
+    c.kids.filter(k => k.forkAt === i).forEach(k => go('Started here: ' + k.title + ' ↗', k, 0));
+    if (i === 0 && by.has(c.parent)) go('↩ Came from: ' + by.get(c.parent).title, by.get(c.parent), c.forkAt);
+    if (move) {
+      z = Math.max(z, .9);
+      x = room() / 2 - z * c.pts[i][0]; y = tall() / 2 - z * c.pts[i][1];
+    }
+    draw();
+  }
+  const shut = () => { cur = null; $('panel').hidden = true; draw(); };
+  $('prev').onclick = () => open(cur.c, cur.i - 1, true);
+  $('next').onclick = () => open(cur.c, cur.i + 1, true);
+  $('close').onclick = shut;
+  $('fit').onclick = fit;
+  $('in').onclick = () => zoom(1.4);
+  $('out').onclick = () => zoom(1 / 1.4);
+  hub.addEventListener('click', fit);
+  convs.forEach(c => {
+    const b = document.createElement('button');
+    b.className = 'conv';
+    b.textContent = (by.has(c.parent) ? '↳ ' : '') + c.title;
+    b.onclick = () => open(c, c.msgs.length - 1, true);
+    $('convs').append(b);
+  });
+  addEventListener('keydown', e => {
+    if (e.key === 'Escape') shut();
+    if (!cur || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    e.preventDefault();
+    open(cur.c, cur.i + (e.key === 'ArrowRight' ? 1 : -1), true);
+  });
+
+  let drag = null;
+  svg.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, moved: false, target: e.target }; });
+  addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    drag.moved = true; drag.x = e.clientX; drag.y = e.clientY; x += dx; y += dy;
+    svg.classList.add('drag'); $('tip').hidden = true; draw();
+  });
+  addEventListener('pointerup', () => {
+    if (drag && !drag.moved) {
+      const t = drag.target;
+      if (t.classList.contains('dot')) open(t.conv, t.i);
+      else if (t.classList.contains('label')) frame([[0, 0], ...t.conv.pts]);
+    }
+    drag = null; svg.classList.remove('drag');
+  });
+  addEventListener('pointercancel', () => { drag = null; svg.classList.remove('drag'); });
+  svg.addEventListener('wheel', e => {
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey) zoom(Math.exp(-Math.max(-50, Math.min(50, e.deltaY)) * .01), e.clientX, e.clientY);
+    else { x -= e.deltaX; y -= e.deltaY; draw(); }
+    $('tip').hidden = true;
+  }, { passive: false });
+  svg.addEventListener('pointermove', e => {
+    const t = e.target, tip = $('tip');
+    if (drag?.moved || !t.classList.contains('dot')) { tip.hidden = true; return; }
+    const m = t.conv.msgs[t.i];
+    tip.textContent = '';
+    const h = document.createElement('div'); h.className = 'who'; h.style.color = m.w === 'k' ? 'var(--me)' : 'var(--ai)';
+    h.textContent = who(m) + ' · ' + when(m.at);
+    tip.append(h, m.t.length > 280 ? m.t.slice(0, 280) + '…' : m.t);
+    tip.hidden = false;
+    tip.style.left = Math.max(8, Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8)) + 'px';
+    tip.style.top = Math.max(8, Math.min(e.clientY + 14, innerHeight - tip.offsetHeight - 8)) + 'px';
+  });
+  svg.addEventListener('pointerleave', () => $('tip').hidden = true);
+  addEventListener('resize', draw);
+  fit();
+}
+</script>
+</body>
+</html>
