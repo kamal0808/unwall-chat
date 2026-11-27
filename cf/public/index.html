@@ -177,6 +177,8 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
 .q .preview { border-left: 3px solid var(--accent); padding: 6px 10px; font-size: 14px; white-space: pre-line; background: var(--bg); border-radius: 0 8px 8px 0; }
 .q .preview:empty { display: none; }
 .q.done { color: var(--muted); font-size: 13px; }
+.q .own { display: flex; gap: 8px; align-items: flex-end; }
+.q .own textarea { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--bg); color: var(--ink); font: inherit; resize: vertical; }
 .qline { border: 0; background: none; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; text-align: left; padding: 0; }
 .qline .open { color: var(--accent); }
 #asks .q + .q, #asks .q + .ask, #asks .ask + .q { margin-top: 8px; }
@@ -356,7 +358,8 @@ function needs() {
   $('bubble').classList.toggle('has', list.length > 0);
   const old = all.filter(x => seen.has(x.id) && ['receipt', 'ask', 'cross', 'claude'].includes(x.kind) && (x.kind !== 'claude' || x.re)).slice(-15).reverse();
   $('earlier').innerHTML = old.map(x => `<div class="ask old"><p><b>${x.kind === 'claude' ? 'Answer' : esc(name(x.thread))}:</b> <span class="txt">${esc(x.text)}</span></p>${x.thread ? `<button class="btn" data-open="${x.thread}">Read</button><button class="btn" data-reply="${x.thread}">Reply</button>` : ''}</div>`).join('') || '<p class="none">Nothing yet.</p>';
-  $('asks').innerHTML = list.map(x => {
+  const typing = document.activeElement?.closest?.('.own');  // don't redraw a card while its own answer is being typed
+  if (!typing || !$('asks').contains(typing)) $('asks').innerHTML = list.map(x => {
     if (x.kind === 'ask') return qcard(x);
     const t = threads[x.thread], who = x.kind === 'claude' ? 'Answer' : esc(t.name), kind = {ask: 'Question', receipt: 'Reply', cross: 'Goals across the wall'}[x.kind] || '';
     const btns = x.kind === 'cross'
@@ -386,11 +389,11 @@ function chips() {
 // the Claude-style "working" line: a spinning star and a playful verb while anything is in flight
 const GLYPHS = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
 const VERBS = ['Flabbergasting', 'Billowing', 'Pondering', 'Noodling', 'Percolating', 'Mulling', 'Brewing', 'Simmering', 'Conjuring', 'Untangling', 'Ruminating', 'Tinkering', 'Marinating', 'Wrangling', 'Moseying', 'Schlepping'];
-const seenYou = {}, answered = new Set();
+const seenYou = {}, answered = new Set(), via = {};  // via: was a thread's latest message sent from the main box or inside the thread
 let tick = 0;
 function working() {
   const waiting = Object.keys(seenYou).filter(id => !answered.has(+id) && Date.now() - seenYou[id] < 6e5).length;
-  const busy = Object.values(threads).filter(t => !t.closed && ['working', 'queued'].includes(t.state)).map(t => t.name);
+  const busy = Object.values(threads).filter(t => !t.closed && ['working', 'queued'].includes(t.state) && via[t.id] !== 'thread').map(t => t.name);
   $('working').hidden = !waiting && !busy.length;
   $('what').textContent = waiting ? '· finding where this goes' : `· ${busy.slice(0, 3).join(', ')}${busy.length > 3 ? ` +${busy.length - 3}` : ''}`;
 }
@@ -425,9 +428,9 @@ async function poll() {
       $('stream').insertAdjacentHTML('beforeend', r.stream.map(x => { const h = item(x); lastId = x.id; return h }).join(''));
       last = r.stream.at(-1).id;
       $('stream').scrollTop = $('stream').scrollHeight;
-      if (openK && r.stream.some(s => s.thread === openK)) openThread(openK);
+      if (openK && r.stream.some(s => s.thread === openK) && !$('pBody').contains(document.activeElement?.closest?.('.own'))) openThread(openK);
     }
-    for (const x of r.stream) { if (x.kind === 'you') seenYou[x.id] = x.at; if (x.re) answered.add(x.re) }
+    for (const x of r.stream) { if (x.kind === 'you' && !x.thread) seenYou[x.id] = x.at; if (x.re) answered.add(x.re); if (x.kind === 'ack') via[x.thread] = toThread.has(x.re) ? 'thread' : 'main' }
     chips(); needs(); working();
   } catch {} finally { polling = false }
 }
@@ -443,7 +446,7 @@ async function openThread(k) {
   $('pActions').innerHTML = `<button class="btn primary" data-reply="${k}">Reply</button>` +
     (!t.closed && ['done', 'failed'].includes(t.state) ? `<button class="btn" data-close="${k}">Looks good, close thread</button><button class="btn" data-wrong="${k}">Not right</button>` : '');
   const ask = t.state === 'needs' && !t.closed && t.ask ? [...all].reverse().find(x => x.kind === 'ask' && x.thread === k && !seen.has(x.id)) : null;
-  $('pBody').innerHTML = (turns.length ? turns.map(bubble).join('') : '<p class="tools">Working… its conversation shows here once it has one.</p>') + (ask ? qcard(ask) : '');
+  $('pBody').innerHTML = (turns.length ? turns.map(bubble).join('') : '<p class="tools">Working… its conversation shows here once it has one.</p>') + (ask ? qcard(ask) : '') + (['working', 'queued'].includes(t.state) ? '<p class="tools">✻ Working on your answer…</p>' : '');
   $('panel').classList.add('open');
   $('pBody').scrollTop = $('pBody').scrollHeight;
 }
@@ -463,6 +466,7 @@ $('input').addEventListener('input', grow);
 $('form').addEventListener('paste', e => { if ([...e.clipboardData.files].some(f => f.type.startsWith('image/'))) { e.preventDefault(); addImages(e.clipboardData.files) } });
 $('form').addEventListener('dragover', e => e.preventDefault());
 $('form').addEventListener('drop', e => { e.preventDefault(); addImages(e.dataTransfer.files) });
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && e.target.closest?.('.own')) { e.preventDefault(); e.target.nextElementSibling.click() } });
 $('input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('form').requestSubmit() } };
 
 document.body.addEventListener('click', async e => {
@@ -493,7 +497,9 @@ document.body.addEventListener('click', async e => {
     return;
   }
   const qg = e.target.closest('[data-qgo]'); if (qg) { const q = QS[qg.dataset.qgo]; return answerQ(q, [...q.picked].sort().map(i => q.opts[i].label).join(', ')) }
-  const qx = e.target.closest('[data-qother]'); if (qx) { const q = QS[qx.dataset.qother]; if (q.mock) { $('input').placeholder = 'Mock: in the real app your own answer goes to the thread.'; $('input').focus(); return } quote = {thread: q.thread, from: name(q.thread), text: q.text}; drawQuote(); $('input').focus(); return }
+  const qx = e.target.closest('[data-qother]');
+  if (qx) { const box = qx.closest('.q'); if (!box.querySelector('.own')) box.insertAdjacentHTML('beforeend', `<div class="own"><textarea rows="2" placeholder="Your own answer"></textarea><button class="btn primary" data-qown="${qx.dataset.qother}">Send</button></div>`); box.querySelector('.own textarea').focus(); return }
+  const qw = e.target.closest('[data-qown]'); if (qw) { const v = qw.previousElementSibling.value.trim(); if (v) answerQ(QS[qw.dataset.qown], v); return }
   const yn = e.target.closest('[data-yn]');
   if (yn) { const [id, word] = yn.dataset.yn.split('|'), t = threads[id]; await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `> ${t.ask.replace(/\n/g, '\n> ')}\n\n${word}`, quote: id})}); setTimeout(poll, 150); return }
   const an = e.target.closest('[data-answer]'); if (an) { const t = threads[an.dataset.answer]; quote = {thread: t.id, from: t.name, text: t.ask}; drawQuote(); $('input').focus(); return }
