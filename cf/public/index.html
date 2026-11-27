@@ -177,6 +177,9 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
 .q .preview { border-left: 3px solid var(--accent); padding: 6px 10px; font-size: 14px; white-space: pre-line; background: var(--bg); border-radius: 0 8px 8px 0; }
 .q .preview:empty { display: none; }
 .q.done { color: var(--muted); font-size: 13px; }
+.qline { border: 0; background: none; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; text-align: left; padding: 0; }
+.qline .open { color: var(--accent); }
+#asks .q + .q, #asks .q + .ask, #asks .ask + .q { margin-top: 8px; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
@@ -274,7 +277,7 @@ const said = {}; // id -> your message, so a late answer can say what it answers
 const name = id => threads[id]?.name || 'thread';
 const bubble = t => t.role === 'user'
   ? `<div class="you">${esc(t.text)}</div>`
-  : `<div class="claude">${t.tools?.length ? `<p class="tools">Used ${t.tools.length} tools: ${esc([...new Set(t.tools)].join(', '))}</p>` : ''}${md(t.text.replace(/^(RECEIPT|ASK):\s*/m, '**$1:** '))}</div>`;
+  : `<div class="claude">${t.tools?.length ? `<p class="tools">Used ${t.tools.length} tools: ${esc([...new Set(t.tools)].join(', '))}</p>` : ''}${md(t.text.replace(/^CHOICES:[\s\S]*$/m, '').replace(/^(RECEIPT|ASK|NEXT):\s*/gm, '**$1:** '))}</div>`;
 function item(s) {
   if (s.kind === 'you') { said[s.id] = s.text; const q = s.text.match(/^((?:> .*\n?)+)\n*([\s\S]*)$/), pic = s.images ? `<div class="re">📎 ${s.images} image${s.images > 1 ? 's' : ''}</div>` : ''; return q ? `<div class="you"><blockquote>${esc(q[1].replace(/^> /gm, ''))}</blockquote>${esc(q[2])}${pic}</div>` : `<div class="you">${esc(s.text)}${pic}</div>` }
   if (s.kind === 'claude') {
@@ -283,7 +286,7 @@ function item(s) {
     return `<div class="claude">${re}${md(s.text)}${past ? `<div class="past">${past}</div>` : ''}</div>`;
   }
   if (s.kind === 'cross') return `<div class="ack">Goals across the wall → <b>${esc(name(s.thread))}</b>: ${esc(s.text.slice(0, 140))}</div>`;
-  if (s.kind === 'ask') return seen.has(s.id) || !(threads[s.thread]?.state === 'needs' && !threads[s.thread].closed && threads[s.thread].ask === s.text) ? `<div class="ack">Question → <b>${esc(name(s.thread))}</b>: ${esc(s.text.slice(0, 140))}</div>` : qcard(s);
+  if (s.kind === 'ask') return seen.has(s.id) || !(threads[s.thread]?.state === 'needs' && !threads[s.thread].closed && threads[s.thread].ask === s.text) ? `<div class="ack">Question → <b>${esc(name(s.thread))}</b>: ${esc(s.text.slice(0, 140))}</div>` : `<button class="ack qline" data-open="${s.thread}"><b>${esc(name(s.thread))}</b> asks: ${esc(s.text.slice(0, 140))} <span class="open">Answer</span></button>`;
   if (s.kind === 'ack') return `<div class="ack">${s.reopened ? 'Reopened' : 'On it'} → <b>${esc(name(s.thread))}</b>${s.fresh ? ' (new thread)' : ''}</div>`;
   if (s.kind === 'closed') return `<div class="ack">Closed → <b>${esc(name(s.thread))}</b></div>`;
   if (s.kind === 'receipt') return `<button class="receipt" data-open="${s.thread}"><span class="dot ${s.failed ? '' : 'ok'}"${s.failed ? ' style="background:#c0392b"' : ''}></span><span class="t">${esc(name(s.thread))}</span><span class="o">${esc(s.text)}</span><span class="open">Read</span></button>`;
@@ -294,14 +297,15 @@ const QS = {};
 function qcard(s) {
   const opts = s.options?.length ? s.options : YES_NO.test(s.text) ? [{label: 'Yes'}, {label: 'No'}] : [];
   const mode = s.mode || (s.options?.length > 2 ? 'one' : 'next');
-  QS[s.id] = {...s, opts, mode, picked: new Set()};
+  const picked = QS[s.id]?.picked || new Set(), last = [...picked].at(-1);  // redraws (every poll) keep what was ticked
+  QS[s.id] = {...s, opts, mode, picked};
   const body = mode === 'next'
     ? `<div class="row">${opts.map((o, i) => `<button class="btn${i ? '' : ' primary'}" data-qpick="${s.id}|${i}">${esc(o.label)}</button>`).join('')}<button class="btn" data-qother="${s.id}">${opts.length ? 'Other…' : 'Answer'}</button></div>`
-    : `<div class="opts${mode === 'many' ? ' multi' : ''}">${opts.map((o, i) => `<button class="opt" data-qopt="${s.id}|${i}" aria-pressed="false"><span class="box"></span><span><b>${esc(o.label)}${o.rec ? '<span class="rec">Recommended</span>' : ''}</b>${o.note ? `<small>${esc(o.note)}</small>` : ''}</span></button>`).join('')}<button class="opt" data-qother="${s.id}"><span class="box"></span><span><b>Other…</b><small>Type your own answer</small></span></button></div><div class="preview" id="pv${s.id}"></div><div class="row"><button class="btn primary" data-qgo="${s.id}" disabled>Send</button></div>`;
-  return `<div class="q" id="q${s.id}"><span class="k">${{next: 'Next step', one: 'Pick one', many: 'Pick many'}[mode]} · ${esc(s.label || name(s.thread))}</span><span class="ask">${esc(s.text)}</span>${body}</div>`;
+    : `<div class="opts${mode === 'many' ? ' multi' : ''}">${opts.map((o, i) => `<button class="opt${picked.has(i) ? ' on' : ''}" data-qopt="${s.id}|${i}" aria-pressed="${picked.has(i)}"><span class="box"></span><span><b>${esc(o.label)}${o.rec ? '<span class="rec">Recommended</span>' : ''}</b>${o.note ? `<small>${esc(o.note)}</small>` : ''}</span></button>`).join('')}<button class="opt" data-qother="${s.id}"><span class="box"></span><span><b>Other…</b><small>Type your own answer</small></span></button></div><div class="preview">${last !== undefined ? esc(opts[last]?.preview || '') : ''}</div><div class="row"><button class="btn primary" data-qgo="${s.id}"${picked.size ? '' : ' disabled'}>${mode === 'many' && picked.size ? `Send ${picked.size}` : 'Send'}</button></div>`;
+  return `<div class="q" data-q="${s.id}"><span class="k">${{next: 'Next step', one: 'Pick one', many: 'Pick many'}[mode]} · ${esc(s.label || name(s.thread))}</span><span class="ask">${esc(s.text)}</span>${body}</div>`;
 }
 async function answerQ(q, words) {
-  $('q' + q.id).outerHTML = `<div class="q done">${esc(q.label || name(q.thread))}: ${esc(q.text)}</div><div class="you">${esc(words)}</div>`;
+  document.querySelectorAll(`.q[data-q="${q.id}"]`).forEach(el => el.outerHTML = `<div class="q done">${esc(q.label || name(q.thread))}: ${esc(q.text)}</div><div class="you">${esc(words)}</div>`);
   if (q.mock) return;
   markSeen([q.id]);
   await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `> ${q.text.replace(/\n/g, '\n> ')}\n\n${words}`, quote: q.thread})});
@@ -349,6 +353,7 @@ function needs() {
   const old = all.filter(x => seen.has(x.id) && ['receipt', 'ask', 'cross', 'claude'].includes(x.kind) && (x.kind !== 'claude' || x.re)).slice(-15).reverse();
   $('earlier').innerHTML = old.map(x => `<div class="ask old"><p><b>${x.kind === 'claude' ? 'Answer' : esc(name(x.thread))}:</b> <span class="txt">${esc(x.text)}</span></p>${x.thread ? `<button class="btn" data-open="${x.thread}">Read</button><button class="btn" data-reply="${x.thread}">Reply</button>` : ''}</div>`).join('') || '<p class="none">Nothing yet.</p>';
   $('asks').innerHTML = list.map(x => {
+    if (x.kind === 'ask') return qcard(x);
     const t = threads[x.thread], who = x.kind === 'claude' ? 'Answer' : esc(t.name), kind = {ask: 'Question', receipt: 'Reply', cross: 'Goals across the wall'}[x.kind] || '';
     const btns = x.kind === 'cross'
       ? `<button class="btn" data-open="${x.thread}" data-seen="${x.id}">Read</button><button class="btn primary" data-cross="${x.thread}|allow" data-seen="${x.id}">Allow once</button><button class="btn" data-cross="${x.thread}|deny" data-seen="${x.id}">No</button>`
@@ -433,7 +438,8 @@ async function openThread(k) {
   $('pMeta').textContent = `${{done: 'Done', failed: 'Failed', needs: 'Waiting on you'}[t.state] || 'Working'}${t.closed ? ' · closed' : ''} · ${t.folder.startsWith('/') ? t.folder.replace(/^\/Users\/[^/]+/, '~') : '~/dev/' + t.folder} on your Mac${t.tokens ? ` · ${fmtTok(t.tokens)} tokens` : ''}`;
   $('pActions').innerHTML = `<button class="btn primary" data-reply="${k}">Reply</button>` +
     (!t.closed && ['done', 'failed'].includes(t.state) ? `<button class="btn" data-close="${k}">Looks good, close thread</button><button class="btn" data-wrong="${k}">Not right</button>` : '');
-  $('pBody').innerHTML = turns.length ? turns.map(bubble).join('') : '<p class="tools">Working… its conversation shows here once it has one.</p>';
+  const ask = t.state === 'needs' && !t.closed && t.ask ? [...all].reverse().find(x => x.kind === 'ask' && x.thread === k && !seen.has(x.id)) : null;
+  $('pBody').innerHTML = (turns.length ? turns.map(bubble).join('') : '<p class="tools">Working… its conversation shows here once it has one.</p>') + (ask ? qcard(ask) : '');
   $('panel').classList.add('open');
   $('pBody').scrollTop = $('pBody').scrollHeight;
 }
@@ -475,10 +481,10 @@ document.body.addEventListener('click', async e => {
   const qp = e.target.closest('[data-qpick]'); if (qp) { const [id, i] = qp.dataset.qpick.split('|'); return answerQ(QS[id], QS[id].opts[i].label) }
   const qo = e.target.closest('[data-qopt]');
   if (qo) {
-    const [id, i] = qo.dataset.qopt.split('|'), q = QS[id], box = $('q' + id);
+    const [id, i] = qo.dataset.qopt.split('|'), q = QS[id], box = qo.closest('.q');
     if (q.mode === 'many') q.picked.has(+i) ? q.picked.delete(+i) : q.picked.add(+i); else { q.picked.clear(); q.picked.add(+i) }
     box.querySelectorAll('[data-qopt]').forEach(b => { const on = q.picked.has(+b.dataset.qopt.split('|')[1]); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on) });
-    $('pv' + id).textContent = q.picked.has(+i) ? q.opts[i].preview || '' : '';
+    box.querySelector('.preview').textContent = q.picked.has(+i) ? q.opts[i].preview || '' : '';
     const go = box.querySelector('[data-qgo]'); go.disabled = !q.picked.size; go.textContent = q.mode === 'many' && q.picked.size ? `Send ${q.picked.size}` : 'Send';
     return;
   }
