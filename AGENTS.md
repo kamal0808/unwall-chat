@@ -11,10 +11,12 @@ This repo is the one-box chat Kamal talks to (live at https://unwall.kamalkhatwa
 
 ## How to ship a change
 
+Before you install the relay or deploy: `git fetch` and merge `origin/main` into your branch. Then compare what is installed (`~/.local/bin/unwall-air-relay.py`) or live with your copy; if it has changes yours lacks, merge them in first. Shipping a stale copy has removed other threads' work (2026-11-27).
+
 - Page or Worker: edit under `cf/`, then deploy from the mini (wrangler is logged in there; don't install it on the Air):
   `scp cf/worker.js mini:dev/unwall-cf/ && scp cf/public/index.html mini:dev/unwall-cf/public/ && ssh mini 'cd ~/dev/unwall-cf && PATH=/opt/homebrew/bin:$PATH npx -y wrangler@4.162.0 deploy'`
   Conversations live in the Durable Object, so a deploy loses nothing; Cloudflare can take a few minutes to switch the Durable Object to new code.
-- Relay: `cp air-relay.py ~/.local/bin/unwall-air-relay.py && launchctl kill SIGTERM gui/$(id -u)/com.kamal.unwall-relay`. It stops taking messages, lets running threads (yours included) finish, exits, and launchd starts the new code. Never use `kickstart -k` from inside a thread: it waits for the relay, which waits for you.
+- Relay: `cp air-relay.py ~/.local/bin/unwall-air-relay.py && launchctl kill SIGTERM gui/$(id -u)/com.kamal.unwall-relay`. It keeps taking messages until no thread is running, then exits, and launchd starts the new code. Never use `kickstart -k` from inside a thread: it waits for the relay, which waits for you.
 - Check `node --check cf/worker.js`, parse the page's script, and `python3 -c "import ast; ast.parse(open('air-relay.py').read())"` before deploying. A broken relay or page breaks the box Kamal would use to ask for the fix.
 
 ## Rules
