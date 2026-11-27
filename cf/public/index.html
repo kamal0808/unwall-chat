@@ -135,6 +135,28 @@ aside .body { padding: 16px; overflow-y: auto; overflow-x: hidden; flex: 1; disp
 .setting p { margin: 2px 0 10px; font-size: 13px; color: var(--muted); }
 select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-height: 40px; width: 100%; }
 .note { font-size: 12px; color: var(--muted); text-align: center; margin: -8px 0 10px; }
+
+/* motion: Infinitia's values (opacity + a few px, 150-300 ms), plain CSS */
+:root { --ease: cubic-bezier(.16, 1, .3, 1); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px) } }
+@keyframes fade { from { opacity: 0 } }
+@keyframes glow { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 22%, transparent), 0 6px 24px #00000026 } }
+@keyframes flash { 0% { box-shadow: 0 0 0 0 var(--ok) } 100% { box-shadow: 0 0 0 16px transparent } }
+.ready #stream > *, .ask.fresh, .chip.fresh { animation: rise .2s var(--ease) both; }
+.btn, .chip, .receipt, .icon, .link, .bubble { transition: transform .15s var(--ease), background-color .15s, border-color .15s, color .15s, box-shadow .2s; }
+.btn:hover, .chip:hover, .icon:hover { transform: scale(1.04); }
+.receipt:hover { transform: scale(1.01); }
+.bubble:hover { transform: scale(1.07); }
+.btn:active, .chip:active, .icon:active, .receipt:active, .bubble:active { transform: scale(.96); }
+.bubble.busy { animation: glow 1.8s ease-in-out infinite; border-color: var(--accent); }
+.bubble.flash { animation: flash .7s ease-out; }
+.hub-back { display: block; opacity: 0; visibility: hidden; transition: opacity .22s var(--ease), visibility .22s; }
+.hub-back.open { opacity: 1; visibility: visible; }
+.hub, aside { transition: transform .26s var(--ease); }
+#settings.open { animation: fade .2s ease-out; }
+.ask .txt { display: block; max-height: 6.4em; overflow: hidden; transition: max-height .25s var(--ease); }
+.ask details[open] .txt { max-height: 60em; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
@@ -279,6 +301,7 @@ function cards() {
     (x.kind === 'receipt' && latest[x.thread] === x.id && threads[x.thread] && !threads[x.thread].closed) ||
     (['ask', 'cross'].includes(x.kind) && latest[x.thread] === x.id && threads[x.thread]?.state === 'needs' && !threads[x.thread].closed)));
 }
+const shownAsks = new Set(), shownChips = new Set();
 function needs() {
   const list = cards();
   $('fyTitle').textContent = 'For you';
@@ -297,14 +320,20 @@ function needs() {
       : x.kind === 'receipt'
       ? `<button class="btn" data-open="${x.thread}" data-seen="${x.id}">Read</button><button class="btn" data-reply="${x.thread}">Reply</button><button class="btn primary" data-seen="${x.id}">Got it</button>`
       : `<button class="btn primary" data-seen="${x.id}">Got it</button>`;
-    return `<div class="ask"><details><summary><p>${kind ? `<span class="kind">${kind}</span>` : ''}<b>${who}:</b> <span class="txt">${esc(x.text)}</span></p></summary></details>${btns}</div>`;
+    const fresh = shownAsks.has(x.id) ? '' : ' fresh'; shownAsks.add(x.id);
+    return `<div class="ask${fresh}"><details><summary><p>${kind ? `<span class="kind">${kind}</span>` : ''}<b>${who}:</b> <span class="txt">${esc(x.text)}</span></p></summary></details>${btns}</div>`;
   }).join('');
 }
+let prevBusy = 0;
 function chips() {
   const busy = Object.values(threads).filter(t => !t.closed && ['working', 'queued'].includes(t.state));
   $('chips').innerHTML = busy.map(t =>
-    `<button class="chip working" data-open="${t.id}"><span class="dot"></span>${esc(t.name)} <span class="st">· ${t.state === 'queued' ? 'starting' : 'working'}</span></button>`).join('');
+    `<button class="chip working${shownChips.has(t.id) ? '' : ' fresh'}" data-open="${t.id}"><span class="dot"></span>${esc(t.name)} <span class="st">· ${t.state === 'queued' ? 'starting' : 'working'}</span></button>`).join('');
+  busy.forEach(t => shownChips.add(t.id));
   $('bdot').hidden = !busy.length;
+  $('bubble').classList.toggle('busy', busy.length > 0);
+  if (busy.length < prevBusy) { const b = $('bubble'); b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); b.onanimationend = () => b.classList.remove('flash') }
+  prevBusy = busy.length;
   $('wkTitle').textContent = `Working · ${busy.length}`;
   if (!busy.length) $('chips').innerHTML = '<p class="none">Nothing running.</p>';
 }
@@ -433,7 +462,7 @@ $('pClose').onclick = () => { $('panel').classList.remove('open'); openK = null 
 $('gear').onclick = () => { $('settings').classList.add('open'); $('sClose').focus() };
 $('sClose').onclick = () => $('settings').classList.remove('open');
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('panel').classList.remove('open'); openK = null; $('settings').classList.remove('open'); $('needs').classList.remove('open'); $('hubBack').classList.remove('open') } });
-poll();
+poll().finally(() => setTimeout(() => document.body.classList.add('ready'), 400)); // the first load shouldn't animate the whole history
 </script>
 </body>
 </html>
