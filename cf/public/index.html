@@ -102,6 +102,7 @@ form { display: flex; flex-direction: column; gap: 8px; background: var(--card);
 .thumbs:empty { display: none; }
 .thumb { position: relative; }
 .thumb img { height: 56px; border-radius: 8px; border: 1px solid var(--line); display: block; }
+.fchip { display: block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 17px 10px; font-size: 13px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); }
 .thumb button { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; line-height: 1; padding: 0; }
 form .row { display: flex; gap: 10px; align-items: flex-end; }
 textarea { flex: 1; border: 0; background: none; color: var(--ink); font: inherit; resize: none; outline: none; max-height: 220px; overflow-y: auto; }
@@ -213,6 +214,8 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
     <div id="quotes"></div>
     <div id="thumbs" class="thumbs"></div>
     <div class="row">
+      <button class="btn" type="button" id="attach" aria-label="Attach images or files" title="Attach images or files">📎</button>
+      <input type="file" id="picker" multiple hidden>
       <textarea id="input" rows="1" placeholder="Say anything. It goes to the right thread." aria-label="Message"></textarea>
       <button class="btn primary" type="submit">Send</button>
     </div>
@@ -284,7 +287,7 @@ function item(s) {
   // an answer or reply sent to a thread lives in that thread; the main chat keeps one line
   if (s.kind === 'you' && s.thread) { said[s.id] = s.text; toThread.add(s.id); return `<button class="ack qline" data-open="${s.thread}">You → <b>${esc(name(s.thread))}</b>: ${esc(s.text.replace(/^(> .*\n?)+\n*/, '').slice(0, 120))}</button>` }
   if (s.kind === 'ack' && toThread.has(s.re)) return '';
-  if (s.kind === 'you') { said[s.id] = s.text; const q = s.text.match(/^((?:> .*\n?)+)\n*([\s\S]*)$/), pic = s.images ? `<div class="re">📎 ${s.images} image${s.images > 1 ? 's' : ''}</div>` : ''; return q ? `<div class="you"><blockquote>${esc(q[1].replace(/^> /gm, ''))}</blockquote>${esc(q[2])}${pic}</div>` : `<div class="you">${esc(s.text)}${pic}</div>` }
+  if (s.kind === 'you') { said[s.id] = s.text; const q = s.text.match(/^((?:> .*\n?)+)\n*([\s\S]*)$/), pic = s.images ? `<div class="re">📎 ${s.images} attachment${s.images > 1 ? 's' : ''}</div>` : ''; return q ? `<div class="you"><blockquote>${esc(q[1].replace(/^> /gm, ''))}</blockquote>${esc(q[2])}${pic}</div>` : `<div class="you">${esc(s.text)}${pic}</div>` }
   if (s.kind === 'claude') {
     const re = s.re && s.re !== lastId && said[s.re] ? `<p class="re">↳ re: “${esc(said[s.re].slice(0, 90))}${said[s.re].length > 90 ? '…' : ''}”</p>` : '';
     const past = (s.sessions || []).map(p => `<button class="btn" data-revive="${esc(JSON.stringify(p))}" title="Reopen this conversation">${esc(p.title)} · ${new Date(p.active).toLocaleDateString(undefined, {day: 'numeric', month: 'short'})}</button>`).join('');
@@ -333,11 +336,18 @@ function shrink(file) {
     img.src = url;
   });
 }
+// shortcut: non-image files ride as data URLs with ;name=, capped near 1.3 MB by the Worker; upgrade to R2 for bigger ones
+const readFile = f => new Promise(ok => { const r = new FileReader(); r.onload = () => ok(r.result.replace(';base64,', ';name=' + encodeURIComponent(f.name) + ';base64,')); r.onerror = () => ok(null); r.readAsDataURL(f) });
 async function addImages(files) {
-  for (const f of [...files].filter(f => f.type.startsWith('image/')).slice(0, 4 - pending.length)) { const d = await shrink(f); if (d) pending.push(d) }
+  for (const f of [...files].slice(0, 4 - pending.length)) {
+    const d = f.type.startsWith('image/') ? await shrink(f) : await readFile(f);
+    if (d && d.length < 1.8e6) pending.push(d); else alert(f.name + ' is too big to attach (limit about 1.3 MB).');
+  }
   drawThumbs();
 }
-const drawThumbs = () => $('thumbs').innerHTML = pending.map((d, i) => `<span class="thumb"><img src="${d}" alt="Attached image ${i + 1}"><button type="button" data-rm="${i}" aria-label="Remove image">×</button></span>`).join('');
+const drawThumbs = () => $('thumbs').innerHTML = pending.map((d, i) => `<span class="thumb">${d.startsWith('data:image/') ? `<img src="${d}" alt="Attached image ${i + 1}">` : `<span class="fchip">${esc(decodeURIComponent((d.match(/;name=([^;]*)/) || [])[1] || 'file'))}</span>`}<button type="button" data-rm="${i}" aria-label="Remove attachment">×</button></span>`).join('');
+$('attach').onclick = () => $('picker').click();
+$('picker').onchange = e => { addImages(e.target.files); e.target.value = '' };
 const all = [], seen = new Set();
 const markSeen = ids => { ids = ids.filter(id => !seen.has(id)); if (!ids.length) return; ids.forEach(id => seen.add(id)); needs(); fetch('/api/one/seen', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({ids})}) };
 function cards() {
