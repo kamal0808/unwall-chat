@@ -135,6 +135,53 @@ aside .body { padding: 16px; overflow-y: auto; overflow-x: hidden; flex: 1; disp
 .setting p { margin: 2px 0 10px; font-size: 13px; color: var(--muted); }
 select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-height: 40px; width: 100%; }
 .note { font-size: 12px; color: var(--muted); text-align: center; margin: -8px 0 10px; }
+
+/* motion: Infinitia's values (opacity + a few px, 150-300 ms), plain CSS */
+:root { --ease: cubic-bezier(.16, 1, .3, 1); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px) } }
+@keyframes fade { from { opacity: 0 } }
+@keyframes glow { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 22%, transparent), 0 6px 24px #00000026 } }
+@keyframes flash { 0% { box-shadow: 0 0 0 0 var(--ok) } 100% { box-shadow: 0 0 0 16px transparent } }
+.ready #stream > *, .ask.fresh, .chip.fresh { animation: rise .2s var(--ease) both; }
+.btn, .chip, .receipt, .icon, .link, .bubble { transition: transform .15s var(--ease), background-color .15s, border-color .15s, color .15s, box-shadow .2s; }
+.btn:hover, .chip:hover, .icon:hover { transform: scale(1.04); }
+.receipt:hover { transform: scale(1.01); }
+.bubble:hover { transform: scale(1.07); }
+.btn:active, .chip:active, .icon:active, .receipt:active, .bubble:active { transform: scale(.96); }
+.bubble.busy { animation: glow 1.8s ease-in-out infinite; border-color: var(--accent); }
+.bubble.flash { animation: flash .7s ease-out; }
+.hub-back { display: block; opacity: 0; visibility: hidden; transition: opacity .22s var(--ease), visibility .22s; }
+.hub-back.open { opacity: 1; visibility: visible; }
+.hub, aside { transition: transform .26s var(--ease); }
+#settings.open { animation: fade .2s ease-out; }
+.ask .txt { display: block; max-height: 6.4em; overflow: hidden; transition: max-height .25s var(--ease); }
+.ask details[open] .txt { max-height: 60em; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* question cards: a thread's next step, pick one, pick many; "Other…" types your own */
+.q { border: 1px solid var(--line); background: var(--card); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.q .k { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--warn); font-weight: 600; }
+.q .ask { font-weight: 500; display: block; padding: 0; }
+.q .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.q .btn:disabled { opacity: .45; cursor: default; }
+.q .opts { display: flex; flex-direction: column; gap: 6px; }
+.opt { display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 10px; padding: 9px 12px; font: inherit; cursor: pointer; }
+.opt:hover, .opt.on { border-color: var(--accent); }
+.opt .box { width: 18px; height: 18px; border: 1.5px solid var(--muted); border-radius: 50%; flex: none; margin-top: 3px; display: grid; place-items: center; font-size: 12px; color: #fff; }
+.multi .opt .box { border-radius: 5px; }
+.opt.on .box { background: var(--accent); border-color: var(--accent); }
+.opt.on .box::after { content: '✓'; }
+.opt b { font-weight: 500; display: block; }
+.opt small { color: var(--muted); font-size: 13px; display: block; }
+.opt .rec { font-size: 11px; color: var(--ok); margin-left: 6px; font-weight: 500; }
+.q .preview { border-left: 3px solid var(--accent); padding: 6px 10px; font-size: 14px; white-space: pre-line; background: var(--bg); border-radius: 0 8px 8px 0; }
+.q .preview:empty { display: none; }
+.q.done { color: var(--muted); font-size: 13px; }
+.q .own { display: flex; gap: 8px; align-items: flex-end; }
+.q .own textarea { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--bg); color: var(--ink); font: inherit; resize: vertical; }
+.qline { border: 0; background: none; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; text-align: left; padding: 0; }
+.qline .open { color: var(--accent); }
+#asks .q + .q, #asks .q + .ask, #asks .ask + .q { margin-top: 8px; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
@@ -232,8 +279,11 @@ const said = {}; // id -> your message, so a late answer can say what it answers
 const name = id => threads[id]?.name || 'thread';
 const bubble = t => t.role === 'user'
   ? `<div class="you">${esc(t.text)}</div>`
-  : `<div class="claude">${t.tools?.length ? `<p class="tools">Used ${t.tools.length} tools: ${esc([...new Set(t.tools)].join(', '))}</p>` : ''}${md(t.text.replace(/^(RECEIPT|ASK):\s*/m, '**$1:** '))}</div>`;
+  : `<div class="claude">${t.tools?.length ? `<p class="tools">Used ${t.tools.length} tools: ${esc([...new Set(t.tools)].join(', '))}</p>` : ''}${md(t.text.replace(/^(NEXT|ASK):[\s\S]*$/m, '').replace(/^(RECEIPT|ASK|NEXT):\s*/gm, '**$1:** '))}</div>`;
 function item(s) {
+  // an answer or reply sent to a thread lives in that thread; the main chat keeps one line
+  if (s.kind === 'you' && s.thread) { said[s.id] = s.text; toThread.add(s.id); return `<button class="ack qline" data-open="${s.thread}">You → <b>${esc(name(s.thread))}</b>: ${esc(s.text.replace(/^(> .*\n?)+\n*/, '').slice(0, 120))}</button>` }
+  if (s.kind === 'ack' && toThread.has(s.re)) return '';
   if (s.kind === 'you') { said[s.id] = s.text; const q = s.text.match(/^((?:> .*\n?)+)\n*([\s\S]*)$/), pic = s.images ? `<div class="re">📎 ${s.images} image${s.images > 1 ? 's' : ''}</div>` : ''; return q ? `<div class="you"><blockquote>${esc(q[1].replace(/^> /gm, ''))}</blockquote>${esc(q[2])}${pic}</div>` : `<div class="you">${esc(s.text)}${pic}</div>` }
   if (s.kind === 'claude') {
     const re = s.re && s.re !== lastId && said[s.re] ? `<p class="re">↳ re: “${esc(said[s.re].slice(0, 90))}${said[s.re].length > 90 ? '…' : ''}”</p>` : '';
@@ -241,13 +291,32 @@ function item(s) {
     return `<div class="claude">${re}${md(s.text)}${past ? `<div class="past">${past}</div>` : ''}</div>`;
   }
   if (s.kind === 'cross') return `<div class="ack">Goals across the wall → <b>${esc(name(s.thread))}</b>: ${esc(s.text.slice(0, 140))}</div>`;
-  if (s.kind === 'ask') return `<div class="ack">Question → <b>${esc(name(s.thread))}</b>: ${esc(s.text.slice(0, 140))}</div>`;
+  if (s.kind === 'ask') return seen.has(s.id) || !(threads[s.thread]?.state === 'needs' && !threads[s.thread].closed && threads[s.thread].ask === s.text) ? `<div class="ack">Question → <b>${esc(name(s.thread))}</b>: ${esc(s.text.slice(0, 140))}</div>` : `<button class="ack qline" data-open="${s.thread}"><b>${esc(name(s.thread))}</b> asks: ${esc(s.text.slice(0, 140))} <span class="open">Answer</span></button>`;
   if (s.kind === 'ack') return `<div class="ack">${s.reopened ? 'Reopened' : 'On it'} → <b>${esc(name(s.thread))}</b>${s.fresh ? ' (new thread)' : ''}</div>`;
   if (s.kind === 'closed') return `<div class="ack">Closed → <b>${esc(name(s.thread))}</b></div>`;
   if (s.kind === 'receipt') return `<button class="receipt" data-open="${s.thread}"><span class="dot ${s.failed ? '' : 'ok'}"${s.failed ? ' style="background:#c0392b"' : ''}></span><span class="t">${esc(name(s.thread))}</span><span class="o">${esc(s.text)}</span><span class="open">Read</span></button>`;
   return '';
 }
 let lastId = 0;
+const toThread = new Set();
+const QS = {};
+function qcard(s) {
+  const opts = s.options?.length ? s.options : YES_NO.test(s.text) ? [{label: 'Yes'}, {label: 'No'}] : [];
+  const mode = s.mode || (s.options?.length > 2 ? 'one' : 'next');
+  const picked = QS[s.id]?.picked || new Set(), last = [...picked].at(-1);  // redraws (every poll) keep what was ticked
+  QS[s.id] = {...s, opts, mode, picked};
+  const body = mode === 'next'
+    ? `<div class="row">${opts.map((o, i) => `<button class="btn${i ? '' : ' primary'}" data-qpick="${s.id}|${i}">${esc(o.label)}</button>`).join('')}<button class="btn" data-qother="${s.id}">${opts.length ? 'Other…' : 'Answer'}</button></div>`
+    : `<div class="opts${mode === 'many' ? ' multi' : ''}">${opts.map((o, i) => `<button class="opt${picked.has(i) ? ' on' : ''}" data-qopt="${s.id}|${i}" aria-pressed="${picked.has(i)}"><span class="box"></span><span><b>${esc(o.label)}${o.rec ? '<span class="rec">Recommended</span>' : ''}</b>${o.note ? `<small>${esc(o.note)}</small>` : ''}</span></button>`).join('')}<button class="opt" data-qother="${s.id}"><span class="box"></span><span><b>Other…</b><small>Type your own answer</small></span></button></div><div class="preview">${last !== undefined ? esc(opts[last]?.preview || '') : ''}</div><div class="row"><button class="btn primary" data-qgo="${s.id}"${picked.size ? '' : ' disabled'}>${mode === 'many' && picked.size ? `Send ${picked.size}` : 'Send'}</button></div>`;
+  return `<div class="q" data-q="${s.id}"><span class="k">${{next: 'Next step', one: 'Pick one', many: 'Pick many'}[mode]} · ${esc(s.label || name(s.thread))}</span><span class="ask">${esc(s.text)}</span>${body}</div>`;
+}
+async function answerQ(q, words) {
+  document.querySelectorAll(`.q[data-q="${q.id}"]`).forEach(el => el.outerHTML = `<div class="q done">${esc(q.label || name(q.thread))}: ${esc(q.text)}</div><div class="you">${esc(words)}</div>`);
+  if (q.mock) return;
+  markSeen([q.id]);
+  await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `> ${q.text.replace(/\n/g, '\n> ')}\n\n${words}`, quote: q.thread})});
+  setTimeout(poll, 150);
+}
 // shortcut: a question that opens with a yes/no verb and has no "or" gets Yes/No buttons; upgrade if the relay should flag it itself
 const YES_NO = /^(can|could|should|shall|do|does|did|is|are|was|will|would|may|have|has|ok|okay)\b(?![\s\S]*\bor\b)[\s\S]*\?\s*$/i;
 let pending = []; // images waiting to be sent: data URLs, already shrunk
@@ -279,6 +348,7 @@ function cards() {
     (x.kind === 'receipt' && latest[x.thread] === x.id && threads[x.thread] && !threads[x.thread].closed) ||
     (['ask', 'cross'].includes(x.kind) && latest[x.thread] === x.id && threads[x.thread]?.state === 'needs' && !threads[x.thread].closed)));
 }
+const shownAsks = new Set(), shownChips = new Set();
 function needs() {
   const list = cards();
   $('fyTitle').textContent = 'For you';
@@ -288,7 +358,9 @@ function needs() {
   $('bubble').classList.toggle('has', list.length > 0);
   const old = all.filter(x => seen.has(x.id) && ['receipt', 'ask', 'cross', 'claude'].includes(x.kind) && (x.kind !== 'claude' || x.re)).slice(-15).reverse();
   $('earlier').innerHTML = old.map(x => `<div class="ask old"><p><b>${x.kind === 'claude' ? 'Answer' : esc(name(x.thread))}:</b> <span class="txt">${esc(x.text)}</span></p>${x.thread ? `<button class="btn" data-open="${x.thread}">Read</button><button class="btn" data-reply="${x.thread}">Reply</button>` : ''}</div>`).join('') || '<p class="none">Nothing yet.</p>';
-  $('asks').innerHTML = list.map(x => {
+  const typing = document.activeElement?.closest?.('.own');  // don't redraw a card while its own answer is being typed
+  if (!typing || !$('asks').contains(typing)) $('asks').innerHTML = list.map(x => {
+    if (x.kind === 'ask') return qcard(x);
     const t = threads[x.thread], who = x.kind === 'claude' ? 'Answer' : esc(t.name), kind = {ask: 'Question', receipt: 'Reply', cross: 'Goals across the wall'}[x.kind] || '';
     const btns = x.kind === 'cross'
       ? `<button class="btn" data-open="${x.thread}" data-seen="${x.id}">Read</button><button class="btn primary" data-cross="${x.thread}|allow" data-seen="${x.id}">Allow once</button><button class="btn" data-cross="${x.thread}|deny" data-seen="${x.id}">No</button>`
@@ -297,25 +369,31 @@ function needs() {
       : x.kind === 'receipt'
       ? `<button class="btn" data-open="${x.thread}" data-seen="${x.id}">Read</button><button class="btn" data-reply="${x.thread}">Reply</button><button class="btn primary" data-seen="${x.id}">Got it</button>`
       : `<button class="btn primary" data-seen="${x.id}">Got it</button>`;
-    return `<div class="ask"><details><summary><p>${kind ? `<span class="kind">${kind}</span>` : ''}<b>${who}:</b> <span class="txt">${esc(x.text)}</span></p></summary></details>${btns}</div>`;
+    const fresh = shownAsks.has(x.id) ? '' : ' fresh'; shownAsks.add(x.id);
+    return `<div class="ask${fresh}"><details><summary><p>${kind ? `<span class="kind">${kind}</span>` : ''}<b>${who}:</b> <span class="txt">${esc(x.text)}</span></p></summary></details>${btns}</div>`;
   }).join('');
 }
+let prevBusy = 0;
 function chips() {
   const busy = Object.values(threads).filter(t => !t.closed && ['working', 'queued'].includes(t.state));
   $('chips').innerHTML = busy.map(t =>
-    `<button class="chip working" data-open="${t.id}"><span class="dot"></span>${esc(t.name)} <span class="st">· ${t.state === 'queued' ? 'starting' : 'working'}</span></button>`).join('');
+    `<button class="chip working${shownChips.has(t.id) ? '' : ' fresh'}" data-open="${t.id}"><span class="dot"></span>${esc(t.name)} <span class="st">· ${t.state === 'queued' ? 'starting' : 'working'}</span></button>`).join('');
+  busy.forEach(t => shownChips.add(t.id));
   $('bdot').hidden = !busy.length;
+  $('bubble').classList.toggle('busy', busy.length > 0);
+  if (busy.length < prevBusy) { const b = $('bubble'); b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); b.onanimationend = () => b.classList.remove('flash') }
+  prevBusy = busy.length;
   $('wkTitle').textContent = `Working · ${busy.length}`;
   if (!busy.length) $('chips').innerHTML = '<p class="none">Nothing running.</p>';
 }
 // the Claude-style "working" line: a spinning star and a playful verb while anything is in flight
 const GLYPHS = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
 const VERBS = ['Flabbergasting', 'Billowing', 'Pondering', 'Noodling', 'Percolating', 'Mulling', 'Brewing', 'Simmering', 'Conjuring', 'Untangling', 'Ruminating', 'Tinkering', 'Marinating', 'Wrangling', 'Moseying', 'Schlepping'];
-const seenYou = {}, answered = new Set();
+const seenYou = {}, answered = new Set(), via = {};  // via: was a thread's latest message sent from the main box or inside the thread
 let tick = 0;
 function working() {
   const waiting = Object.keys(seenYou).filter(id => !answered.has(+id) && Date.now() - seenYou[id] < 6e5).length;
-  const busy = Object.values(threads).filter(t => !t.closed && ['working', 'queued'].includes(t.state)).map(t => t.name);
+  const busy = Object.values(threads).filter(t => !t.closed && ['working', 'queued'].includes(t.state) && via[t.id] !== 'thread').map(t => t.name);
   $('working').hidden = !waiting && !busy.length;
   $('what').textContent = waiting ? '· finding where this goes' : `· ${busy.slice(0, 3).join(', ')}${busy.length > 3 ? ` +${busy.length - 3}` : ''}`;
 }
@@ -350,9 +428,9 @@ async function poll() {
       $('stream').insertAdjacentHTML('beforeend', r.stream.map(x => { const h = item(x); lastId = x.id; return h }).join(''));
       last = r.stream.at(-1).id;
       $('stream').scrollTop = $('stream').scrollHeight;
-      if (openK && r.stream.some(s => s.thread === openK)) openThread(openK);
+      if (openK && r.stream.some(s => s.thread === openK) && !$('pBody').contains(document.activeElement?.closest?.('.own'))) openThread(openK);
     }
-    for (const x of r.stream) { if (x.kind === 'you') seenYou[x.id] = x.at; if (x.re) answered.add(x.re) }
+    for (const x of r.stream) { if (x.kind === 'you' && !x.thread) seenYou[x.id] = x.at; if (x.re) answered.add(x.re); if (x.kind === 'ack') via[x.thread] = toThread.has(x.re) ? 'thread' : 'main' }
     chips(); needs(); working();
   } catch {} finally { polling = false }
 }
@@ -367,7 +445,8 @@ async function openThread(k) {
   $('pMeta').textContent = `${{done: 'Done', failed: 'Failed', needs: 'Waiting on you'}[t.state] || 'Working'}${t.closed ? ' · closed' : ''} · ${t.folder.startsWith('/') ? t.folder.replace(/^\/Users\/[^/]+/, '~') : '~/dev/' + t.folder} on your Mac${t.tokens ? ` · ${fmtTok(t.tokens)} tokens` : ''}`;
   $('pActions').innerHTML = `<button class="btn primary" data-reply="${k}">Reply</button>` +
     (!t.closed && ['done', 'failed'].includes(t.state) ? `<button class="btn" data-close="${k}">Looks good, close thread</button><button class="btn" data-wrong="${k}">Not right</button>` : '');
-  $('pBody').innerHTML = turns.length ? turns.map(bubble).join('') : '<p class="tools">Working… its conversation shows here once it has one.</p>';
+  const ask = t.state === 'needs' && !t.closed && t.ask ? [...all].reverse().find(x => x.kind === 'ask' && x.thread === k && !seen.has(x.id)) : null;
+  $('pBody').innerHTML = (turns.length ? turns.map(bubble).join('') : '<p class="tools">Working… its conversation shows here once it has one.</p>') + (ask ? qcard(ask) : '') + (['working', 'queued'].includes(t.state) ? '<p class="tools">✻ Working on your answer…</p>' : '');
   $('panel').classList.add('open');
   $('pBody').scrollTop = $('pBody').scrollHeight;
 }
@@ -387,6 +466,7 @@ $('input').addEventListener('input', grow);
 $('form').addEventListener('paste', e => { if ([...e.clipboardData.files].some(f => f.type.startsWith('image/'))) { e.preventDefault(); addImages(e.clipboardData.files) } });
 $('form').addEventListener('dragover', e => e.preventDefault());
 $('form').addEventListener('drop', e => { e.preventDefault(); addImages(e.dataTransfer.files) });
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && e.target.closest?.('.own')) { e.preventDefault(); e.target.nextElementSibling.click() } });
 $('input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('form').requestSubmit() } };
 
 document.body.addEventListener('click', async e => {
@@ -406,6 +486,20 @@ document.body.addEventListener('click', async e => {
   const rm = e.target.closest('[data-rm]'); if (rm) { pending.splice(+rm.dataset.rm, 1); return drawThumbs() }
   const cr = e.target.closest('[data-cross]');
   if (cr) { const [id, how] = cr.dataset.cross.split('|'); await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: how === 'allow' ? 'Allow once' : 'No', quote: id, cross: how})}); setTimeout(poll, 150); return }
+  const qp = e.target.closest('[data-qpick]'); if (qp) { const [id, i] = qp.dataset.qpick.split('|'); return answerQ(QS[id], QS[id].opts[i].label) }
+  const qo = e.target.closest('[data-qopt]');
+  if (qo) {
+    const [id, i] = qo.dataset.qopt.split('|'), q = QS[id], box = qo.closest('.q');
+    if (q.mode === 'many') q.picked.has(+i) ? q.picked.delete(+i) : q.picked.add(+i); else { q.picked.clear(); q.picked.add(+i) }
+    box.querySelectorAll('[data-qopt]').forEach(b => { const on = q.picked.has(+b.dataset.qopt.split('|')[1]); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on) });
+    box.querySelector('.preview').textContent = q.picked.has(+i) ? q.opts[i].preview || '' : '';
+    const go = box.querySelector('[data-qgo]'); go.disabled = !q.picked.size; go.textContent = q.mode === 'many' && q.picked.size ? `Send ${q.picked.size}` : 'Send';
+    return;
+  }
+  const qg = e.target.closest('[data-qgo]'); if (qg) { const q = QS[qg.dataset.qgo]; return answerQ(q, [...q.picked].sort().map(i => q.opts[i].label).join(', ')) }
+  const qx = e.target.closest('[data-qother]');
+  if (qx) { const box = qx.closest('.q'); if (!box.querySelector('.own')) box.insertAdjacentHTML('beforeend', `<div class="own"><textarea rows="2" placeholder="Your own answer"></textarea><button class="btn primary" data-qown="${qx.dataset.qother}">Send</button></div>`); box.querySelector('.own textarea').focus(); return }
+  const qw = e.target.closest('[data-qown]'); if (qw) { const v = qw.previousElementSibling.value.trim(); if (v) answerQ(QS[qw.dataset.qown], v); return }
   const yn = e.target.closest('[data-yn]');
   if (yn) { const [id, word] = yn.dataset.yn.split('|'), t = threads[id]; await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `> ${t.ask.replace(/\n/g, '\n> ')}\n\n${word}`, quote: id})}); setTimeout(poll, 150); return }
   const an = e.target.closest('[data-answer]'); if (an) { const t = threads[an.dataset.answer]; quote = {thread: t.id, from: t.name, text: t.ask}; drawQuote(); $('input').focus(); return }
@@ -433,7 +527,19 @@ $('pClose').onclick = () => { $('panel').classList.remove('open'); openK = null 
 $('gear').onclick = () => { $('settings').classList.add('open'); $('sClose').focus() };
 $('sClose').onclick = () => $('settings').classList.remove('open');
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('panel').classList.remove('open'); openK = null; $('settings').classList.remove('open'); $('needs').classList.remove('open'); $('hubBack').classList.remove('open') } });
-poll();
+poll().finally(() => {
+  setTimeout(() => document.body.classList.add('ready'), 400);
+  // #mock shows the three kinds of question on fake data; nothing is sent
+  if (location.hash.includes('mock')) $('stream').insertAdjacentHTML('beforeend', [
+    {id: 'm1', kind: 'ask', mock: true, label: 'TOPC House (mock)', text: 'Start the posting plan for the groups where posting is OK?', options: [{label: 'Start it'}, {label: 'Hold for now'}]},
+    {id: 'm2', kind: 'ask', mock: true, label: 'TOPC House (mock)', mode: 'one', text: 'Which post goes to the Pune Startups WhatsApp group?', options: [
+      {label: 'Short invite', note: '2 lines and the link', rec: true, preview: "Building something in Pune and tired of working alone?\nWe're picking a house together. Vote for one: topc.social/house"},
+      {label: 'Question first', note: 'Asks before it pitches', preview: 'Where do Pune builders actually work together, not side by side?\nWe\'re trying a house for it: topc.social/house'},
+      {label: 'Photo + one line', note: 'A house photo and the link', preview: "[photo: Talera Park villa]\nThis could be Pune's builders' house. Vote: topc.social/house"}]},
+    {id: 'm3', kind: 'ask', mock: true, label: 'TOPC House (mock)', mode: 'many', text: 'Which groups should get the post this week?', options: [
+      {label: 'TOPC Meetup', note: 'Ours, posting is fine', rec: true}, {label: 'Pune Startups WhatsApp', note: 'Rules allow it'}, {label: 'Circle & Co.', note: 'Wednesdays only'}, {label: 'r/punemeetup', note: 'Allowed, low traffic'}, {label: 'eChai Pune', note: 'Ask the admin first'}]},
+  ].map(qcard).join('')), $('stream').scrollTop = $('stream').scrollHeight;
+}); // the first load shouldn't animate the whole history
 </script>
 </body>
 </html>

@@ -16,9 +16,13 @@ MODELS = {"Haiku": "haiku", "Sonnet": "sonnet", "Opus": "opus"}
 # PeopleWiz folders sign in with their own Claude account, as Kamal's shell does
 OTHER_ACCOUNT = {"dashoz": "~/.claude-peoplewiz-info", "peoplewiz": "~/.claude-peoplewiz-info"}
 SESSIONS = os.path.join(HOME, "Library/Application Support/Claude/claude-code-sessions")
-RECEIPT = """Kamal reads only the last part of your reply, so end it in one of two ways:
-- "RECEIPT: " followed by the result itself in at most 3 short lines. If he asked a question, that is the answer with its facts, numbers or list, not a description of what you did. If you changed something, say what changed and where he can check it.
-- "ASK: " followed by one question, only when you truly cannot go on without him: you need his yes for something risky or outward (sending, posting, paying, deleting), or the answer exists nowhere you can look. Never ask what you can find out yourself from files, tools, the TOPC brain or past sessions; decide, say what you assumed, and finish the work."""
+RECEIPT = """Kamal reads only the end of your reply. End it like this:
+RECEIPT: the result itself in at most 3 short lines. If he asked a question, that is the answer with its facts, numbers or list, not a description of what you did. If you changed something, say what changed and where he can check it.
+Then, only when the next move is a decision that is his (his yes before sending, posting, paying or deleting; a choice between approaches or drafts), add:
+NEXT: one short question
+CHOICES: {"mode": "next", "options": [{"label": "1-3 words", "note": "one line", "preview": "full draft text, only when choosing between drafts", "rec": true}]}
+mode "next" = 1-2 buttons, your pick first; "one" = pick one of 2-4; "many" = tick several. Put "rec": true on your pick. He can always type his own answer, so never add an "Other" option.
+Never ask what you can find out yourself from files, tools, the TOPC brain or past sessions: look it up, decide, say what you assumed, and finish the work."""
 
 
 RAMU_RECALL = ("ssh mini 'cd ~/dev/ramu-kaka && python3 -c \"import ramu_memory,sys; print(ramu_memory.recall(sys.argv[1], "
@@ -182,13 +186,18 @@ def overview(job, all_sessions):
 
 def route(job):
     """Where a message goes: an answer, an existing thread, or a new thread in a folder."""
-    if job.get("quote") and any(t["id"] == job["quote"] for t in job["threads"]):
-        return {"go": "thread", "id": job["quote"]}
+    pinned = next((t for t in job["threads"] if t["id"] == job.get("quote")), None)
+    # an answer to a thread's own words (Answer, Yes/No, a quote) always goes back to it; plain Reply mode is only a hint
+    if pinned and job["text"].lstrip().startswith(">"):
+        return {"go": "thread", "id": pinned["id"]}
     line = lambda t: f'- id {t["id"]}: "{t["name"]}" in ~/dev/{t["folder"]}, {"closed" if t.get("closed") else t.get("state")}: {(t.get("ask") or t.get("receipt") or t.get("last") or "")[:160]}'
     folders = ", ".join(sorted(d for d in os.listdir(DEV) if os.path.isdir(os.path.join(DEV, d)) and not d.startswith((".", "_"))))
     prompt = ("You route Kamal's messages. Send a message to a thread only when it is about that thread's own subject; use the recent "
               "conversation to tell what \"it\" or \"that\" means. Questions about the overall picture (what is running, how many sessions "
               "or threads, what is waiting, what was decided, where something was left) are answers, even right after a thread's work.\n\n"
+              "A new problem, product or service that a thread's name and work don't cover is a new topic, even right after that thread "
+              "spoke. When unsure, start a new thread.\n\n" +
+              (f'Kamal had Reply open on thread {pinned["id"]} ("{pinned["name"]}"): prefer it only if the message is about that thread\'s subject.\n\n' if pinned else "") +
               f"Recent conversation:\n{recent(job)}\n\nThreads:\n" + ("\n".join(map(line, job["threads"][-15:])) or "(none)") +
               f"\n\nProject folders in ~/dev: {folders}\nThis box itself (its page, design, bubble, behaviour) is the folder unwall-chat.\n\nKamal's new message:\n\"\"\"{job['text']}\"\"\"\n\n"
               'Reply with JSON only, one of:\n{"go":"thread","id":"<thread id>"} when it continues a thread\'s work (a closed one gets reopened)\n'
@@ -234,6 +243,25 @@ def brief(job):
 LOCKS = {}
 
 
+def next_step(out):
+    """The question a reply ends with (NEXT, or the older ASK) and its CHOICES, cleaned for the page's cards."""
+    q = (m.group(1).strip() if (m := re.search(r"^(?:NEXT|ASK):\s*(.+?)\s*(?=^CHOICES:|\Z)", out, re.M | re.S)) else None)
+    choices = None
+    if q and (m := re.search(r"^CHOICES:\s*", out, re.M)):
+        try:
+            c, _ = json.JSONDecoder().raw_decode(out[m.end():])
+            opts = [{k: str(o[k])[:1500 if k == "preview" else 120] for k in ("label", "note", "preview") if o.get(k)} | ({"rec": True} if o.get("rec") else {})
+                    for o in c.get("options", []) if isinstance(o, dict) and o.get("label")][:6]
+            if opts:
+                choices = {"mode": c.get("mode") if c.get("mode") in ("next", "one", "many") else ("one" if len(opts) > 2 else "next"), "options": opts}
+        except (ValueError, AttributeError):
+            pass
+    return q, choices
+
+
+LOOKUP = re.compile(r"\b(want me to|should i|shall i|do you want me to|can i|may i)\b[^?]*\b(look|check|find|search|research|compare|pull|get|dig|see)\b", re.I)
+
+
 def run_thread(job, t, text):
     with LOCKS.setdefault(t["id"], threading.Lock()):  # one message at a time per thread
         t.update(state="working", last=text[:80]); save_thread(t)
@@ -242,21 +270,27 @@ def run_thread(job, t, text):
             fork = t.pop("fork", False)
             out, sid = claude(text, os.path.join(DEV, t["folder"]), MODELS[job["settings"]["threads"]], t.get("sessionId"), RECEIPT + guidance(job) + goals_rule(t), fork=fork, tid=t["id"])
             t["sessionId"] = sid if fork else (t.get("sessionId") or sid)
-            asked = (m.group(1).strip() if (m := re.search(r"^ASK:\s*([\s\S]+)$", out, re.M)) else None)
+            asked, choices = next_step(out)
+            if asked and LOOKUP.search(asked):  # an offer to look something up isn't a question for Kamal: send it back to do it
+                out, _ = claude(f"Don't ask Kamal that; do it now: {asked}\nThen give him the answer itself.", os.path.join(DEV, t["folder"]),
+                                MODELS[job["settings"]["threads"]], t["sessionId"], RECEIPT + guidance(job) + goals_rule(t), tid=t["id"])
+                asked, choices = next_step(out)
             if (m := re.search(r"^CROSS:\s*(.+?)\s*\|\s*(.+)$", out, re.M)):
                 other = "work" if side(t) == "personal" else "personal"
                 t["cross"] = {"query": m.group(1).strip()[:200], "why": m.group(2).strip()[:300], "to": other}
                 asked = f"Wants to look at your {other} goals about \"{t['cross']['query']}\": {t['cross']['why']}"
-            receipt = (m.group(1) if (m := re.search(r"^RECEIPT:\s*([\s\S]+)$", out, re.M)) else out.strip().split("\n\n")[-1]).strip()[:500]
-            t.update(receipt=receipt, ask=asked[:400] if asked else None, state="needs" if asked else "done")
+            body = re.split(r"^(?:NEXT|ASK|CHOICES):", out, maxsplit=1, flags=re.M)[0]
+            receipt = (m.group(1) if (m := re.search(r"^RECEIPT:\s*([\s\S]+)$", body, re.M)) else body.strip().split("\n\n")[-1]).strip()[:500]
+            t.update(receipt=receipt, ask=asked[:400] if asked else None, choices=choices if asked else None, state="needs" if asked else "done")
         except Exception as e:
             out = ""
             t.update(state="failed", ask=None, receipt=f"failed: {str(e)[:120]}")
         save_thread(t, [{"role": "user", "text": text}, {"role": "claude", "text": out}] if out else [{"role": "user", "text": text}])
-        if t.get("ask"):
-            event(kind="cross" if t.get("cross") else "ask", thread=t["id"], text=t["ask"])
-        else:
+        # the result always shows; a question for Kamal follows it as its own card
+        if t.get("receipt") and not (t.get("cross") and t.get("ask")):
             event(kind="receipt", thread=t["id"], text=t["receipt"], failed=t["state"] == "failed")
+        if t.get("ask"):
+            event(kind="cross" if t.get("cross") else "ask", thread=t["id"], text=t["ask"], **(t.get("choices") or {}))
 
 
 def history(cli):

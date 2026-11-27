@@ -42,7 +42,7 @@ export class Box extends DurableObject {
       const {text, quote, revive, images, cross} = await body();
       const imgs = (Array.isArray(images) ? images : []).filter(i => typeof i === 'string' && i.startsWith('data:image/') && i.length < 1.8e6).slice(0, 4);
       if (typeof text !== 'string' || (!text.trim() && !imgs.length)) return json({error: 'empty message'}, 400);
-      const you = this.push({kind: 'you', text: text.trim(), images: imgs.length});
+      const you = this.push({kind: 'you', text: text.trim(), images: imgs.length, ...(quote && s.threads[quote] ? {thread: quote} : {})});
       for (const [i, d] of imgs.entries()) await this.ctx.storage.put(`img:${you.id}:${i}`, d);
       s.inbox.push({type: 'message', re: you.id, text: text.trim(), quote: quote || null, revive: revive?.cli ? revive : null, images: imgs.length, cross: ['allow', 'deny'].includes(cross) ? cross : null});
       await this.save(); this.wake();
