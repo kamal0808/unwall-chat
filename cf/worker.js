@@ -40,7 +40,7 @@ export class Box extends DurableObject {
     }
     if (p === '/api/one' && req.method === 'POST') {
       const {text, quote, revive, images, cross} = await body();
-      const imgs = (Array.isArray(images) ? images : []).filter(i => typeof i === 'string' && i.startsWith('data:image/') && i.length < 1.8e6).slice(0, 4);
+      const imgs = (Array.isArray(images) ? images : []).filter(i => typeof i === 'string' && i.startsWith('data:') && i.length < 1.8e6).slice(0, 4);
       if (typeof text !== 'string' || (!text.trim() && !imgs.length)) return json({error: 'empty message'}, 400);
       const you = this.push({kind: 'you', text: text.trim(), images: imgs.length, ...(quote && s.threads[quote] ? {thread: quote} : {})});
       for (const [i, d] of imgs.entries()) await this.ctx.storage.put(`img:${you.id}:${i}`, d);

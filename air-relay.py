@@ -6,7 +6,7 @@ Holds one request open to the Unwall box on Cloudflare (answered when there is a
 thread, using the Claude Code engine already installed here, in Kamal's real folders and tools.
 Idle cost is one sleeping HTTP request; Claude runs get low CPU priority.
 """
-import base64, glob, json, os, re, signal, subprocess, threading, time, urllib.error, urllib.request
+import base64, glob, json, os, re, signal, subprocess, threading, time, urllib.error, urllib.parse, urllib.request
 
 HOME = os.path.expanduser("~")
 IMG_DIR = os.path.join(HOME, ".cache/unwall-images")
@@ -393,12 +393,15 @@ def handle(job):
         paths = []
         for i, d in enumerate(job.get("imgs") or []):
             head, _, b64 = d.partition(",")
-            ext = {"image/png": "png", "image/webp": "webp", "image/gif": "gif"}.get(head[5:].split(";")[0], "jpg")
+            nm = re.search(r";name=([^;]*)", head)
+            mime = head[5:].split(";")[0]
+            ext = {"image/png": "png", "image/webp": "webp", "image/gif": "gif"}.get(mime, "jpg")
+            fname = re.sub(r"[^\w.-]", "_", urllib.parse.unquote(nm.group(1)))[:60] if nm else f"image.{ext}"
             os.makedirs(IMG_DIR, exist_ok=True)
-            paths.append(os.path.join(IMG_DIR, f"{job['re']}-{i}.{ext}"))
+            paths.append(os.path.join(IMG_DIR, f"{job['re']}-{i}-{fname}"))
             open(paths[-1], "wb").write(base64.b64decode(b64))
         if paths:
-            job["text"] += "\n\n[Kamal attached images; look at them with the Read tool: " + ", ".join(paths) + "]"
+            job["text"] += "\n\n[Kamal attached files or images; look at them with the Read tool: " + ", ".join(paths) + "]"
         remember_always(job)
         if job.get("revive"):
             p = job["revive"]

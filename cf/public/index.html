@@ -7,10 +7,10 @@
 <style>
 :root {
   --bg: #f6f4ee; --ink: #1f1e1b; --muted: #6f6b62; --line: #e2ded2; --bubble: #e9e5d9;
-  --accent: #c96442; --card: #fffdf8; --ok: #3f7d4e; --warn: #b7791f;
+  --accent: #c96442; --link: #a8472a; --card: #fffdf8; --ok: #3f7d4e; --warn: #b7791f;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #1f1e1c; --ink: #ece9e1; --muted: #a39e93; --line: #34332e; --bubble: #2b2a26; --card: #262522; --ok: #6fbf80; --warn: #e0b04a; }
+  :root { --bg: #1f1e1c; --ink: #ece9e1; --muted: #a39e93; --line: #34332e; --bubble: #2b2a26; --card: #262522; --link: #f0a283; --ok: #6fbf80; --warn: #e0b04a; }
 }
 * { box-sizing: border-box; }
 body { margin: 0; height: 100vh; height: 100dvh; background: var(--bg); color: var(--ink); font: 15px/1.6 Geist, system-ui, sans-serif; }
@@ -76,6 +76,7 @@ h1 small { font: 12px system-ui; color: var(--muted); margin-left: 8px; }
 .receipt .t, .receipt .open { line-height: 1.6; }
 .re { font-size: 12px; color: var(--muted); margin: 0 0 2px; }
 .past { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+a, a:visited { color: var(--link); text-underline-offset: 2px; }
 .past a { font-size: 12px; }
 .receipt .open { color: var(--accent); font-size: 13px; white-space: nowrap; }
 .batch-items { display: none; flex-direction: column; gap: 8px; padding-left: 14px; border-left: 2px solid var(--line); }
@@ -102,6 +103,10 @@ form { display: flex; flex-direction: column; gap: 8px; background: var(--card);
 .thumbs:empty { display: none; }
 .thumb { position: relative; }
 .thumb img { height: 56px; border-radius: 8px; border: 1px solid var(--line); display: block; }
+.pform { padding: 8px 16px 4px; display: flex; flex-direction: column; gap: 8px; }
+form.drop, .pform.drop { outline: 2px dashed var(--ink); outline-offset: 6px; border-radius: 14px; }
+form.drop .row::before { content: "Drop to attach"; align-self: center; font-size: 14px; }
+.fchip { display: block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 17px 10px; font-size: 13px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); }
 .thumb button { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; line-height: 1; padding: 0; }
 form .row { display: flex; gap: 10px; align-items: flex-end; }
 textarea { flex: 1; border: 0; background: none; color: var(--ink); font: inherit; resize: none; outline: none; max-height: 220px; overflow-y: auto; }
@@ -213,6 +218,8 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
     <div id="quotes"></div>
     <div id="thumbs" class="thumbs"></div>
     <div class="row">
+      <button class="btn" type="button" id="attach" aria-label="Attach images or files" title="Attach images or files">📎</button>
+      <input type="file" id="picker" multiple hidden>
       <textarea id="input" rows="1" placeholder="Say anything. It goes to the right thread." aria-label="Message"></textarea>
       <button class="btn primary" type="submit">Send</button>
     </div>
@@ -225,7 +232,15 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
   <div class="pmeta" id="pMeta"></div>
   <div class="actions" id="pActions"></div>
   <div class="body" id="pBody"></div>
-  <p class="hint">Reply sends your next message in the main box to this thread. Select text and press Quote to reply to just that part.</p>
+  <form id="pform" class="pform">
+    <div id="pthumbs" class="thumbs"></div>
+    <div class="row">
+      <button class="btn" type="button" id="pattach" aria-label="Attach images or files" title="Attach images or files">📎</button>
+      <textarea id="pinput" rows="1" placeholder="Reply in this thread" aria-label="Reply in this thread"></textarea>
+      <button class="btn primary" type="submit">Send</button>
+    </div>
+  </form>
+  <p class="hint">Select text and press Quote to reply to just that part.</p>
 </aside>
 
 <section id="settings" aria-label="Settings">
@@ -284,7 +299,7 @@ function item(s) {
   // an answer or reply sent to a thread lives in that thread; the main chat keeps one line
   if (s.kind === 'you' && s.thread) { said[s.id] = s.text; toThread.add(s.id); return `<button class="ack qline" data-open="${s.thread}">You → <b>${esc(name(s.thread))}</b>: ${esc(s.text.replace(/^(> .*\n?)+\n*/, '').slice(0, 120))}</button>` }
   if (s.kind === 'ack' && toThread.has(s.re)) return '';
-  if (s.kind === 'you') { said[s.id] = s.text; const q = s.text.match(/^((?:> .*\n?)+)\n*([\s\S]*)$/), pic = s.images ? `<div class="re">📎 ${s.images} image${s.images > 1 ? 's' : ''}</div>` : ''; return q ? `<div class="you"><blockquote>${esc(q[1].replace(/^> /gm, ''))}</blockquote>${esc(q[2])}${pic}</div>` : `<div class="you">${esc(s.text)}${pic}</div>` }
+  if (s.kind === 'you') { said[s.id] = s.text; const q = s.text.match(/^((?:> .*\n?)+)\n*([\s\S]*)$/), pic = s.images ? `<div class="re">📎 ${s.images} attachment${s.images > 1 ? 's' : ''}</div>` : ''; return q ? `<div class="you"><blockquote>${esc(q[1].replace(/^> /gm, ''))}</blockquote>${esc(q[2])}${pic}</div>` : `<div class="you">${esc(s.text)}${pic}</div>` }
   if (s.kind === 'claude') {
     const re = s.re && s.re !== lastId && said[s.re] ? `<p class="re">↳ re: “${esc(said[s.re].slice(0, 90))}${said[s.re].length > 90 ? '…' : ''}”</p>` : '';
     const past = (s.sessions || []).map(p => `<button class="btn" data-revive="${esc(JSON.stringify(p))}" title="Reopen this conversation">${esc(p.title)} · ${new Date(p.active).toLocaleDateString(undefined, {day: 'numeric', month: 'short'})}</button>`).join('');
@@ -319,7 +334,9 @@ async function answerQ(q, words) {
 }
 // shortcut: a question that opens with a yes/no verb and has no "or" gets Yes/No buttons; upgrade if the relay should flag it itself
 const YES_NO = /^(can|could|should|shall|do|does|did|is|are|was|will|would|may|have|has|ok|okay)\b(?![\s\S]*\bor\b)[\s\S]*\?\s*$/i;
-let pending = []; // images waiting to be sent: data URLs, already shrunk
+const box = {main: {list: [], thumbs: 'thumbs', form: 'form'}, panel: {list: [], thumbs: 'pthumbs', form: 'pform'}};
+let where = 'main'; // which box the next picked, pasted or dropped file goes to
+const inPanel = el => !!el?.closest?.('#panel'); // images waiting to be sent: data URLs, already shrunk
 function shrink(file) {
   return new Promise(ok => {
     const img = new Image(), url = URL.createObjectURL(file);
@@ -333,11 +350,20 @@ function shrink(file) {
     img.src = url;
   });
 }
-async function addImages(files) {
-  for (const f of [...files].filter(f => f.type.startsWith('image/')).slice(0, 4 - pending.length)) { const d = await shrink(f); if (d) pending.push(d) }
-  drawThumbs();
+// shortcut: non-image files ride as data URLs with ;name=, capped near 1.3 MB by the Worker; upgrade to R2 for bigger ones
+const readFile = f => new Promise(ok => { const r = new FileReader(); r.onload = () => ok(r.result.replace(';base64,', ';name=' + encodeURIComponent(f.name) + ';base64,')); r.onerror = () => ok(null); r.readAsDataURL(f) });
+async function addImages(files, w = where) {
+  const pending = box[w].list;
+  for (const f of [...files].slice(0, 4 - pending.length)) {
+    const d = f.type.startsWith('image/') ? await shrink(f) : await readFile(f);
+    if (d && d.length < 1.8e6) pending.push(d); else alert(f.name + ' is too big to attach (limit about 1.3 MB).');
+  }
+  drawThumbs(w);
 }
-const drawThumbs = () => $('thumbs').innerHTML = pending.map((d, i) => `<span class="thumb"><img src="${d}" alt="Attached image ${i + 1}"><button type="button" data-rm="${i}" aria-label="Remove image">×</button></span>`).join('');
+const drawThumbs = w => $(box[w].thumbs).innerHTML = box[w].list.map((d, i) => `<span class="thumb">${d.startsWith('data:image/') ? `<img src="${d}" alt="Attached image ${i + 1}">` : `<span class="fchip">${esc(decodeURIComponent((d.match(/;name=([^;]*)/) || [])[1] || 'file'))}</span>`}<button type="button" data-rm="${i}" aria-label="Remove attachment">×</button></span>`).join('');
+$('attach').onclick = () => { where = 'main'; $('picker').click() };
+$('pattach').onclick = () => { where = 'panel'; $('picker').click() };
+$('picker').onchange = e => { addImages(e.target.files); e.target.value = '' };
 const all = [], seen = new Set();
 const markSeen = ids => { ids = ids.filter(id => !seen.has(id)); if (!ids.length) return; ids.forEach(id => seen.add(id)); needs(); fetch('/api/one/seen', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({ids})}) };
 function cards() {
@@ -458,17 +484,29 @@ const drawQuote = () => $('quotes').innerHTML = quote ? `<div class="quote"><spa
 $('form').onsubmit = async e => {
   e.preventDefault();
   let text = $('input').value.trim();
-  if (!text && !quote?.text && !pending.length) return;
+  if (!text && !quote?.text && !box.main.list.length) return;
   if (quote?.text) text = `> ${quote.text.replace(/\n/g, '\n> ')}\n\n${text}`;
-  const q = quote?.thread, images = pending; quote = null; pending = []; drawQuote(); drawThumbs(); $('input').value = ''; grow();
+  const q = quote?.thread, images = box.main.list; quote = null; box.main.list = []; drawQuote(); drawThumbs('main'); $('input').value = ''; grow();
   await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text, quote: q, images})});
   setTimeout(poll, 150);
 };
+$('pform').onsubmit = async e => {
+  e.preventDefault();
+  const text = $('pinput').value.trim(), images = box.panel.list;
+  if (!openK || (!text && !images.length)) return;
+  box.panel.list = []; drawThumbs('panel'); $('pinput').value = '';
+  await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text, quote: openK, images})});
+  setTimeout(() => { poll(); openThread(openK) }, 300);
+};
+$('pinput').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('pform').requestSubmit() } };
 const grow = () => { const i = $('input'); i.style.height = 'auto'; i.style.height = Math.min(i.scrollHeight, 220) + 'px' };
 $('input').addEventListener('input', grow);
-$('form').addEventListener('paste', e => { if ([...e.clipboardData.files].some(f => f.type.startsWith('image/'))) { e.preventDefault(); addImages(e.clipboardData.files) } });
-$('form').addEventListener('dragover', e => e.preventDefault());
-$('form').addEventListener('drop', e => { e.preventDefault(); addImages(e.dataTransfer.files) });
+$('pform').addEventListener('paste', e => { if ([...e.clipboardData.files].some(f => f.type.startsWith('image/'))) { e.preventDefault(); addImages(e.clipboardData.files, 'panel') } });
+$('form').addEventListener('paste', e => { if ([...e.clipboardData.files].some(f => f.type.startsWith('image/'))) { e.preventDefault(); addImages(e.clipboardData.files, 'main') } });
+const dropOn = w => ['main', 'panel'].forEach(k => $(box[k].form).classList.toggle('drop', k === w));
+document.addEventListener('dragover', e => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); dropOn(inPanel(e.target) ? 'panel' : 'main') } });
+document.addEventListener('dragleave', e => { if (!e.relatedTarget) dropOn(null) });
+document.addEventListener('drop', e => { dropOn(null); if (e.dataTransfer.files.length) { e.preventDefault(); addImages(e.dataTransfer.files, inPanel(e.target) ? 'panel' : 'main') } });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && e.target.closest?.('.own')) { e.preventDefault(); e.target.nextElementSibling.click() } });
 $('input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('form').requestSubmit() } };
 
@@ -486,7 +524,7 @@ document.body.addEventListener('click', async e => {
   const c = e.target.closest('[data-close]'); if (c) { await fetch(`/api/one/thread/${c.dataset.close}/close`, {method: 'POST'}); $('panel').classList.remove('open'); openK = null; return poll() }
   const rv = e.target.closest('[data-revive]');
   if (rv) { const p = JSON.parse(rv.dataset.revive); await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `Reopen "${p.title}"`, revive: p})}); setTimeout(poll, 150); return }
-  const rm = e.target.closest('[data-rm]'); if (rm) { pending.splice(+rm.dataset.rm, 1); return drawThumbs() }
+  const rm = e.target.closest('[data-rm]'); if (rm) { const w = inPanel(rm) ? 'panel' : 'main'; box[w].list.splice(+rm.dataset.rm, 1); return drawThumbs(w) }
   const cr = e.target.closest('[data-cross]');
   if (cr) { const [id, how] = cr.dataset.cross.split('|'); await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: how === 'allow' ? 'Allow once' : 'No', quote: id, cross: how})}); setTimeout(poll, 150); return }
   const qp = e.target.closest('[data-qpick]'); if (qp) { const [id, i] = qp.dataset.qpick.split('|'); return answerQ(QS[id], QS[id].opts[i].label) }
@@ -506,7 +544,7 @@ document.body.addEventListener('click', async e => {
   const yn = e.target.closest('[data-yn]');
   if (yn) { const [id, word] = yn.dataset.yn.split('|'), t = threads[id]; await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `> ${t.ask.replace(/\n/g, '\n> ')}\n\n${word}`, quote: id})}); setTimeout(poll, 150); return }
   const an = e.target.closest('[data-answer]'); if (an) { const t = threads[an.dataset.answer]; quote = {thread: t.id, from: t.name, text: t.ask}; drawQuote(); $('input').focus(); return }
-  const rp = e.target.closest('[data-reply]'); if (rp) { quote = {thread: rp.dataset.reply, from: name(rp.dataset.reply), text: ''}; drawQuote(); $('input').focus(); return }
+  const rp = e.target.closest('[data-reply]'); if (rp) { if ($('panel').classList.contains('open') && openK === rp.dataset.reply) { $('pinput').focus(); return } quote = {thread: rp.dataset.reply, from: name(rp.dataset.reply), text: ''}; drawQuote(); $('input').focus(); return }
   const w = e.target.closest('[data-wrong]'); if (w) { quote = {thread: w.dataset.wrong, from: name(w.dataset.wrong), text: 'Not right:'}; drawQuote(); $('panel').classList.remove('open'); $('input').focus(); return }
   if (e.target.id === 'unquote') { quote = null; drawQuote(); return }
   if (e.target.id === 'quoteBtn') {
