@@ -157,6 +157,26 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
 .ask .txt { display: block; max-height: 6.4em; overflow: hidden; transition: max-height .25s var(--ease); }
 .ask details[open] .txt { max-height: 60em; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* question cards: a thread's next step, pick one, pick many; "Other…" types your own */
+.q { border: 1px solid var(--line); background: var(--card); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.q .k { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--warn); font-weight: 600; }
+.q .ask { font-weight: 500; display: block; padding: 0; }
+.q .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.q .btn:disabled { opacity: .45; cursor: default; }
+.q .opts { display: flex; flex-direction: column; gap: 6px; }
+.opt { display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 10px; padding: 9px 12px; font: inherit; cursor: pointer; }
+.opt:hover, .opt.on { border-color: var(--accent); }
+.opt .box { width: 18px; height: 18px; border: 1.5px solid var(--muted); border-radius: 50%; flex: none; margin-top: 3px; display: grid; place-items: center; font-size: 12px; color: #fff; }
+.multi .opt .box { border-radius: 5px; }
+.opt.on .box { background: var(--accent); border-color: var(--accent); }
+.opt.on .box::after { content: '✓'; }
+.opt b { font-weight: 500; display: block; }
+.opt small { color: var(--muted); font-size: 13px; display: block; }
+.opt .rec { font-size: 11px; color: var(--ok); margin-left: 6px; font-weight: 500; }
+.q .preview { border-left: 3px solid var(--accent); padding: 6px 10px; font-size: 14px; white-space: pre-line; background: var(--bg); border-radius: 0 8px 8px 0; }
+.q .preview:empty { display: none; }
+.q.done { color: var(--muted); font-size: 13px; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
@@ -263,13 +283,30 @@ function item(s) {
     return `<div class="claude">${re}${md(s.text)}${past ? `<div class="past">${past}</div>` : ''}</div>`;
   }
   if (s.kind === 'cross') return `<div class="ack">Goals across the wall → <b>${esc(name(s.thread))}</b>: ${esc(s.text.slice(0, 140))}</div>`;
-  if (s.kind === 'ask') return `<div class="ack">Question → <b>${esc(name(s.thread))}</b>: ${esc(s.text.slice(0, 140))}</div>`;
+  if (s.kind === 'ask') return seen.has(s.id) || !(threads[s.thread]?.state === 'needs' && !threads[s.thread].closed && threads[s.thread].ask === s.text) ? `<div class="ack">Question → <b>${esc(name(s.thread))}</b>: ${esc(s.text.slice(0, 140))}</div>` : qcard(s);
   if (s.kind === 'ack') return `<div class="ack">${s.reopened ? 'Reopened' : 'On it'} → <b>${esc(name(s.thread))}</b>${s.fresh ? ' (new thread)' : ''}</div>`;
   if (s.kind === 'closed') return `<div class="ack">Closed → <b>${esc(name(s.thread))}</b></div>`;
   if (s.kind === 'receipt') return `<button class="receipt" data-open="${s.thread}"><span class="dot ${s.failed ? '' : 'ok'}"${s.failed ? ' style="background:#c0392b"' : ''}></span><span class="t">${esc(name(s.thread))}</span><span class="o">${esc(s.text)}</span><span class="open">Read</span></button>`;
   return '';
 }
 let lastId = 0;
+const QS = {};
+function qcard(s) {
+  const opts = s.options?.length ? s.options : YES_NO.test(s.text) ? [{label: 'Yes'}, {label: 'No'}] : [];
+  const mode = s.mode || (s.options?.length > 2 ? 'one' : 'next');
+  QS[s.id] = {...s, opts, mode, picked: new Set()};
+  const body = mode === 'next'
+    ? `<div class="row">${opts.map((o, i) => `<button class="btn${i ? '' : ' primary'}" data-qpick="${s.id}|${i}">${esc(o.label)}</button>`).join('')}<button class="btn" data-qother="${s.id}">${opts.length ? 'Other…' : 'Answer'}</button></div>`
+    : `<div class="opts${mode === 'many' ? ' multi' : ''}">${opts.map((o, i) => `<button class="opt" data-qopt="${s.id}|${i}" aria-pressed="false"><span class="box"></span><span><b>${esc(o.label)}${o.rec ? '<span class="rec">Recommended</span>' : ''}</b>${o.note ? `<small>${esc(o.note)}</small>` : ''}</span></button>`).join('')}<button class="opt" data-qother="${s.id}"><span class="box"></span><span><b>Other…</b><small>Type your own answer</small></span></button></div><div class="preview" id="pv${s.id}"></div><div class="row"><button class="btn primary" data-qgo="${s.id}" disabled>Send</button></div>`;
+  return `<div class="q" id="q${s.id}"><span class="k">${{next: 'Next step', one: 'Pick one', many: 'Pick many'}[mode]} · ${esc(s.label || name(s.thread))}</span><span class="ask">${esc(s.text)}</span>${body}</div>`;
+}
+async function answerQ(q, words) {
+  $('q' + q.id).outerHTML = `<div class="q done">${esc(q.label || name(q.thread))}: ${esc(q.text)}</div><div class="you">${esc(words)}</div>`;
+  if (q.mock) return;
+  markSeen([q.id]);
+  await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `> ${q.text.replace(/\n/g, '\n> ')}\n\n${words}`, quote: q.thread})});
+  setTimeout(poll, 150);
+}
 // shortcut: a question that opens with a yes/no verb and has no "or" gets Yes/No buttons; upgrade if the relay should flag it itself
 const YES_NO = /^(can|could|should|shall|do|does|did|is|are|was|will|would|may|have|has|ok|okay)\b(?![\s\S]*\bor\b)[\s\S]*\?\s*$/i;
 let pending = []; // images waiting to be sent: data URLs, already shrunk
@@ -435,6 +472,18 @@ document.body.addEventListener('click', async e => {
   const rm = e.target.closest('[data-rm]'); if (rm) { pending.splice(+rm.dataset.rm, 1); return drawThumbs() }
   const cr = e.target.closest('[data-cross]');
   if (cr) { const [id, how] = cr.dataset.cross.split('|'); await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: how === 'allow' ? 'Allow once' : 'No', quote: id, cross: how})}); setTimeout(poll, 150); return }
+  const qp = e.target.closest('[data-qpick]'); if (qp) { const [id, i] = qp.dataset.qpick.split('|'); return answerQ(QS[id], QS[id].opts[i].label) }
+  const qo = e.target.closest('[data-qopt]');
+  if (qo) {
+    const [id, i] = qo.dataset.qopt.split('|'), q = QS[id], box = $('q' + id);
+    if (q.mode === 'many') q.picked.has(+i) ? q.picked.delete(+i) : q.picked.add(+i); else { q.picked.clear(); q.picked.add(+i) }
+    box.querySelectorAll('[data-qopt]').forEach(b => { const on = q.picked.has(+b.dataset.qopt.split('|')[1]); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on) });
+    $('pv' + id).textContent = q.picked.has(+i) ? q.opts[i].preview || '' : '';
+    const go = box.querySelector('[data-qgo]'); go.disabled = !q.picked.size; go.textContent = q.mode === 'many' && q.picked.size ? `Send ${q.picked.size}` : 'Send';
+    return;
+  }
+  const qg = e.target.closest('[data-qgo]'); if (qg) { const q = QS[qg.dataset.qgo]; return answerQ(q, [...q.picked].sort().map(i => q.opts[i].label).join(', ')) }
+  const qx = e.target.closest('[data-qother]'); if (qx) { const q = QS[qx.dataset.qother]; if (q.mock) { $('input').placeholder = 'Mock: in the real app your own answer goes to the thread.'; $('input').focus(); return } quote = {thread: q.thread, from: name(q.thread), text: q.text}; drawQuote(); $('input').focus(); return }
   const yn = e.target.closest('[data-yn]');
   if (yn) { const [id, word] = yn.dataset.yn.split('|'), t = threads[id]; await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `> ${t.ask.replace(/\n/g, '\n> ')}\n\n${word}`, quote: id})}); setTimeout(poll, 150); return }
   const an = e.target.closest('[data-answer]'); if (an) { const t = threads[an.dataset.answer]; quote = {thread: t.id, from: t.name, text: t.ask}; drawQuote(); $('input').focus(); return }
@@ -462,7 +511,19 @@ $('pClose').onclick = () => { $('panel').classList.remove('open'); openK = null 
 $('gear').onclick = () => { $('settings').classList.add('open'); $('sClose').focus() };
 $('sClose').onclick = () => $('settings').classList.remove('open');
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('panel').classList.remove('open'); openK = null; $('settings').classList.remove('open'); $('needs').classList.remove('open'); $('hubBack').classList.remove('open') } });
-poll().finally(() => setTimeout(() => document.body.classList.add('ready'), 400)); // the first load shouldn't animate the whole history
+poll().finally(() => {
+  setTimeout(() => document.body.classList.add('ready'), 400);
+  // #mock shows the three kinds of question on fake data; nothing is sent
+  if (location.hash.includes('mock')) $('stream').insertAdjacentHTML('beforeend', [
+    {id: 'm1', kind: 'ask', mock: true, label: 'TOPC House (mock)', text: 'Start the posting plan for the groups where posting is OK?', options: [{label: 'Start it'}, {label: 'Hold for now'}]},
+    {id: 'm2', kind: 'ask', mock: true, label: 'TOPC House (mock)', mode: 'one', text: 'Which post goes to the Pune Startups WhatsApp group?', options: [
+      {label: 'Short invite', note: '2 lines and the link', rec: true, preview: "Building something in Pune and tired of working alone?\nWe're picking a house together. Vote for one: topc.social/house"},
+      {label: 'Question first', note: 'Asks before it pitches', preview: 'Where do Pune builders actually work together, not side by side?\nWe\'re trying a house for it: topc.social/house'},
+      {label: 'Photo + one line', note: 'A house photo and the link', preview: "[photo: Talera Park villa]\nThis could be Pune's builders' house. Vote: topc.social/house"}]},
+    {id: 'm3', kind: 'ask', mock: true, label: 'TOPC House (mock)', mode: 'many', text: 'Which groups should get the post this week?', options: [
+      {label: 'TOPC Meetup', note: 'Ours, posting is fine', rec: true}, {label: 'Pune Startups WhatsApp', note: 'Rules allow it'}, {label: 'Circle & Co.', note: 'Wednesdays only'}, {label: 'r/punemeetup', note: 'Allowed, low traffic'}, {label: 'eChai Pune', note: 'Ask the admin first'}]},
+  ].map(qcard).join('')), $('stream').scrollTop = $('stream').scrollHeight;
+}); // the first load shouldn't animate the whole history
 </script>
 </body>
 </html>
