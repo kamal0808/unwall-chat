@@ -182,6 +182,18 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
 .qline { border: 0; background: none; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; text-align: left; padding: 0; }
 .qline .open { color: var(--accent); }
 #asks .q + .q, #asks .q + .ask, #asks .ask + .q { margin-top: 8px; }
+
+/* priorities sidebar: mock on fake data, shown only with #mock on wide screens */
+#prio { display: none; position: fixed; top: 0; left: 0; bottom: 0; width: 280px; z-index: 3; overflow-y: auto; padding: 16px 12px; border-right: 1px solid var(--line); background: var(--bg); }
+.mockprio #prio { display: block; }
+@media (max-width: 1180px) { .mockprio #prio { display: none; } }
+#prio h2 { font: 500 18px/1.3 Georgia, serif; margin: 0 0 2px; }
+#prio .sub { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+#prio h3 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 0 6px; }
+.pr { display: flex; gap: 9px; border-bottom: 1px solid var(--line); padding: 10px 6px; }
+.pr .n { color: var(--muted); font-size: 12px; width: 14px; flex: none; padding-top: 2px; }
+.pr .t { font-size: 14px; line-height: 1.35; font-weight: 500; display: block; }
+.pr .why { font-size: 12px; color: var(--muted); display: block; margin-top: 2px; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
@@ -197,6 +209,7 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
     </div>
   </header>
   <button class="bubble" id="bubble" aria-label="For you and threads at work" title="For you and threads at work" aria-controls="needs" aria-expanded="false"><b id="bcount">0</b><span class="dot" id="bdot" hidden></span></button>
+  <nav id="prio" aria-label="Priorities"></nav>
   <div id="stream" aria-live="polite"></div>
   <div class="working" id="working" hidden aria-live="off"><span class="glyph" id="glyph">✻</span><span id="verb">Thinking…</span><span class="what" id="what"></span></div>
   <div class="hub-back" id="hubBack"></div>
@@ -533,6 +546,19 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('panel')
 poll().finally(() => {
   setTimeout(() => document.body.classList.add('ready'), 400);
   // #mock shows the three kinds of question on fake data; nothing is sent
+
+  if (location.hash.includes('mock')) {
+    const G = [
+      ['Autopilot everything', 'Next: priorities list that ranks itself'],
+      ['Launch Ideato, get real users', 'Next: Billmobi shop calls, Phusphus join links'],
+      ['Find a fractional co-founder', 'Next: shortlist from Founderbot picks'],
+      ['Grants and DPIIT via TOPC Labs LLP', 'Next: Khushboo needs your PAN'],
+      ['Never get an account banned', 'Next: read each site\'s rules before posting'],
+    ];
+    document.body.classList.add('mockprio');
+    $('prio').innerHTML = '<h2>Priorities</h2><p class="sub">Mock. Your goals in order; drag to change.</p>' +
+      G.map((g, i) => `<div class="pr"><span class="n">${i + 1}</span><span><span class="t">${g[0]}</span><span class="why">${g[1]}</span></span></div>`).join('');
+  }
   if (location.hash.includes('mock')) $('stream').insertAdjacentHTML('beforeend', [
     {id: 'm1', kind: 'ask', mock: true, label: 'TOPC House (mock)', text: 'Start the posting plan for the groups where posting is OK?', options: [{label: 'Start it'}, {label: 'Hold for now'}]},
     {id: 'm2', kind: 'ask', mock: true, label: 'TOPC House (mock)', mode: 'one', text: 'Which post goes to the Pune Startups WhatsApp group?', options: [
