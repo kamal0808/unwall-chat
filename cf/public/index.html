@@ -102,7 +102,8 @@ form { display: flex; flex-direction: column; gap: 8px; background: var(--card);
 .thumbs:empty { display: none; }
 .thumb { position: relative; }
 .thumb img { height: 56px; border-radius: 8px; border: 1px solid var(--line); display: block; }
-form.drop { outline: 2px dashed var(--ink); outline-offset: 6px; border-radius: 14px; }
+.pform { padding: 8px 16px 4px; display: flex; flex-direction: column; gap: 8px; }
+form.drop, .pform.drop { outline: 2px dashed var(--ink); outline-offset: 6px; border-radius: 14px; }
 form.drop .row::before { content: "Drop to attach"; align-self: center; font-size: 14px; }
 .fchip { display: block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 17px 10px; font-size: 13px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); }
 .thumb button { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; line-height: 1; padding: 0; }
@@ -230,7 +231,15 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
   <div class="pmeta" id="pMeta"></div>
   <div class="actions" id="pActions"></div>
   <div class="body" id="pBody"></div>
-  <p class="hint">Reply sends your next message in the main box to this thread. Select text and press Quote to reply to just that part.</p>
+  <form id="pform" class="pform">
+    <div id="pthumbs" class="thumbs"></div>
+    <div class="row">
+      <button class="btn" type="button" id="pattach" aria-label="Attach images or files" title="Attach images or files">📎</button>
+      <textarea id="pinput" rows="1" placeholder="Reply in this thread" aria-label="Reply in this thread"></textarea>
+      <button class="btn primary" type="submit">Send</button>
+    </div>
+  </form>
+  <p class="hint">Select text and press Quote to reply to just that part.</p>
 </aside>
 
 <section id="settings" aria-label="Settings">
@@ -347,8 +356,8 @@ async function addImages(files) {
   }
   drawThumbs();
 }
-const drawThumbs = () => $('thumbs').innerHTML = pending.map((d, i) => `<span class="thumb">${d.startsWith('data:image/') ? `<img src="${d}" alt="Attached image ${i + 1}">` : `<span class="fchip">${esc(decodeURIComponent((d.match(/;name=([^;]*)/) || [])[1] || 'file'))}</span>`}<button type="button" data-rm="${i}" aria-label="Remove attachment">×</button></span>`).join('');
-$('attach').onclick = () => $('picker').click();
+const drawThumbs = () => $('thumbs').innerHTML = $('pthumbs').innerHTML = pending.map((d, i) => `<span class="thumb">${d.startsWith('data:image/') ? `<img src="${d}" alt="Attached image ${i + 1}">` : `<span class="fchip">${esc(decodeURIComponent((d.match(/;name=([^;]*)/) || [])[1] || 'file'))}</span>`}<button type="button" data-rm="${i}" aria-label="Remove attachment">×</button></span>`).join('');
+$('attach').onclick = $('pattach').onclick = () => $('picker').click();
 $('picker').onchange = e => { addImages(e.target.files); e.target.value = '' };
 const all = [], seen = new Set();
 const markSeen = ids => { ids = ids.filter(id => !seen.has(id)); if (!ids.length) return; ids.forEach(id => seen.add(id)); needs(); fetch('/api/one/seen', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({ids})}) };
@@ -476,10 +485,20 @@ $('form').onsubmit = async e => {
   await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text, quote: q, images})});
   setTimeout(poll, 150);
 };
+$('pform').onsubmit = async e => {
+  e.preventDefault();
+  const text = $('pinput').value.trim(), images = pending;
+  if (!openK || (!text && !images.length)) return;
+  pending = []; drawThumbs(); $('pinput').value = '';
+  await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text, quote: openK, images})});
+  setTimeout(() => { poll(); openThread(openK) }, 300);
+};
+$('pinput').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('pform').requestSubmit() } };
 const grow = () => { const i = $('input'); i.style.height = 'auto'; i.style.height = Math.min(i.scrollHeight, 220) + 'px' };
 $('input').addEventListener('input', grow);
+$('pform').addEventListener('paste', e => { if ([...e.clipboardData.files].some(f => f.type.startsWith('image/'))) { e.preventDefault(); addImages(e.clipboardData.files) } });
 $('form').addEventListener('paste', e => { if ([...e.clipboardData.files].some(f => f.type.startsWith('image/'))) { e.preventDefault(); addImages(e.clipboardData.files) } });
-const dropOn = on => $('form').classList.toggle('drop', on);
+const dropOn = on => { $('form').classList.toggle('drop', on); $('pform').classList.toggle('drop', on) };
 document.addEventListener('dragover', e => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); dropOn(true) } });
 document.addEventListener('dragleave', e => { if (!e.relatedTarget) dropOn(false) });
 document.addEventListener('drop', e => { dropOn(false); if (e.dataTransfer.files.length) { e.preventDefault(); addImages(e.dataTransfer.files) } });
@@ -520,7 +539,7 @@ document.body.addEventListener('click', async e => {
   const yn = e.target.closest('[data-yn]');
   if (yn) { const [id, word] = yn.dataset.yn.split('|'), t = threads[id]; await fetch('/api/one', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({text: `> ${t.ask.replace(/\n/g, '\n> ')}\n\n${word}`, quote: id})}); setTimeout(poll, 150); return }
   const an = e.target.closest('[data-answer]'); if (an) { const t = threads[an.dataset.answer]; quote = {thread: t.id, from: t.name, text: t.ask}; drawQuote(); $('input').focus(); return }
-  const rp = e.target.closest('[data-reply]'); if (rp) { quote = {thread: rp.dataset.reply, from: name(rp.dataset.reply), text: ''}; drawQuote(); $('input').focus(); return }
+  const rp = e.target.closest('[data-reply]'); if (rp) { if ($('panel').classList.contains('open') && openK === rp.dataset.reply) { $('pinput').focus(); return } quote = {thread: rp.dataset.reply, from: name(rp.dataset.reply), text: ''}; drawQuote(); $('input').focus(); return }
   const w = e.target.closest('[data-wrong]'); if (w) { quote = {thread: w.dataset.wrong, from: name(w.dataset.wrong), text: 'Not right:'}; drawQuote(); $('panel').classList.remove('open'); $('input').focus(); return }
   if (e.target.id === 'unquote') { quote = null; drawQuote(); return }
   if (e.target.id === 'quoteBtn') {
