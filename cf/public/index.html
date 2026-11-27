@@ -182,6 +182,26 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
 .qline { border: 0; background: none; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; text-align: left; padding: 0; }
 .qline .open { color: var(--accent); }
 #asks .q + .q, #asks .q + .ask, #asks .ask + .q { margin-top: 8px; }
+
+/* priorities sidebar: mock on fake data, shown only with #mock on wide screens */
+#prio { display: none; position: fixed; top: 0; left: 0; bottom: 0; width: 280px; z-index: 3; overflow-y: auto; padding: 16px 12px; border-right: 1px solid var(--line); background: var(--bg); }
+.mockprio #prio { display: block; }
+@media (max-width: 1180px) { .mockprio #prio { display: none; } }
+#prio h2 { font: 500 18px/1.3 Georgia, serif; margin: 0 0 2px; }
+#prio .sub { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+#prio h3 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 0 6px; }
+.pr { display: flex; gap: 9px; width: 100%; text-align: left; border: 1px solid transparent; background: none; color: var(--ink); border-radius: 10px; padding: 8px; font: inherit; cursor: pointer; }
+.pr:hover { background: var(--bubble); }
+.pr .n { color: var(--muted); font-size: 12px; width: 14px; flex: none; padding-top: 2px; }
+.pr .t { font-size: 14px; line-height: 1.35; font-weight: 500; display: block; }
+.pr .why { font-size: 12px; color: var(--muted); display: block; margin-top: 2px; }
+.pr .tag { display: inline-block; font-size: 11px; border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; margin-top: 4px; color: var(--muted); }
+.pr .tag.none { border-style: dashed; }
+.pr .st { width: 8px; height: 8px; border-radius: 50%; flex: none; margin-top: 7px; background: var(--muted); }
+.pr .st.you { background: var(--warn); }
+.pr .st.claude { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.pr .st.them { background: var(--ok); }
+#prio .legend { font-size: 11px; color: var(--muted); margin-top: 14px; line-height: 1.7; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
@@ -197,6 +217,7 @@ select { font: inherit; color: var(--ink); background: var(--bg); border: 1px so
     </div>
   </header>
   <button class="bubble" id="bubble" aria-label="For you and threads at work" title="For you and threads at work" aria-controls="needs" aria-expanded="false"><b id="bcount">0</b><span class="dot" id="bdot" hidden></span></button>
+  <nav id="prio" aria-label="Priorities"></nav>
   <div id="stream" aria-live="polite"></div>
   <div class="working" id="working" hidden aria-live="off"><span class="glyph" id="glyph">✻</span><span id="verb">Thinking…</span><span class="what" id="what"></span></div>
   <div class="hub-back" id="hubBack"></div>
@@ -533,6 +554,26 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('panel')
 poll().finally(() => {
   setTimeout(() => document.body.classList.add('ready'), 400);
   // #mock shows the three kinds of question on fake data; nothing is sent
+
+  if (location.hash.includes('mock')) {
+    const R = [
+      ['you', 'Reply to Sally at CASBS', 'Due 11 Dec, programme goal', 'Programmes'],
+      ['you', 'Answer Sriram on the $800', 'Due 30 Nov, money in', 'LinkToAny'],
+      ['claude', 'Priorities sidebar for Unwall', 'You asked 2 min ago, building the mock', 'Autopilot'],
+      ['you', 'Billmobi: first 5 shop calls', 'Customer proof for grants and Ideato', 'Launch Ideato'],
+      ['them', 'Pulkit and Arun: Phusphus join link', 'Sent, waiting for them', 'Real users'],
+      ['claude', 'Phusphus: 6 Macs stuck', 'Claude is checking the updater', 'Real users'],
+      ['you', 'TOPC Labs LLP: Khushboo needs your PAN', 'Blocks DPIIT, so grants', 'DPIIT and grants'],
+    ], N = [
+      ['Chess coach in WhatsApp', 'Noted today, no goal yet'],
+      ['Waiting-screen ads', 'Noted 25 Oct, raised 2 times'],
+      ['Street View driving game', 'Noted today, no goal yet'],
+    ], row = (r, i) => `<button class="pr"><span class="n">${i + 1}</span><span class="st ${r[0]}"></span><span><span class="t">${r[1]}</span><span class="why">${r[2]}</span><span class="tag">${r[3]}</span></span></button>`;
+    document.body.classList.add('mockprio');
+    $('prio').innerHTML = '<h2>Priorities</h2><p class="sub">Mock on fake data. Claude ranks, you can move any row.</p>' + R.map(row).join('') +
+      '<h3>Noted, not started</h3>' + N.map((r, i) => `<button class="pr"><span class="n">·</span><span class="st"></span><span><span class="t">${r[0]}</span><span class="why">${r[1]}</span><span class="tag none">no goal yet</span></span></button>`).join('') +
+      '<p class="legend"><span class="st you pr" style="display:inline-block;width:8px;height:8px;padding:0;border-radius:50%"></span> waiting on you &nbsp; <span style="color:var(--accent)">●</span> Claude working &nbsp; <span style="color:var(--ok)">●</span> waiting on someone</p>';
+  }
   if (location.hash.includes('mock')) $('stream').insertAdjacentHTML('beforeend', [
     {id: 'm1', kind: 'ask', mock: true, label: 'TOPC House (mock)', text: 'Start the posting plan for the groups where posting is OK?', options: [{label: 'Start it'}, {label: 'Hold for now'}]},
     {id: 'm2', kind: 'ask', mock: true, label: 'TOPC House (mock)', mode: 'one', text: 'Which post goes to the Pune Startups WhatsApp group?', options: [
