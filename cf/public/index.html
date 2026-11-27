@@ -294,7 +294,7 @@ function item(s) {
   if (s.kind === 'ask') return seen.has(s.id) || !(threads[s.thread]?.state === 'needs' && !threads[s.thread].closed && threads[s.thread].ask === s.text) ? `<div class="ack">Question → <b>${esc(name(s.thread))}</b>: ${esc(s.text.slice(0, 140))}</div>` : `<button class="ack qline" data-open="${s.thread}"><b>${esc(name(s.thread))}</b> asks: ${esc(s.text.slice(0, 140))} <span class="open">Answer</span></button>`;
   if (s.kind === 'ack') return `<div class="ack">${s.reopened ? 'Reopened' : 'On it'} → <b>${esc(name(s.thread))}</b>${s.fresh ? ' (new thread)' : ''}</div>`;
   if (s.kind === 'closed') return `<div class="ack">Closed → <b>${esc(name(s.thread))}</b></div>`;
-  if (s.kind === 'receipt') return `<button class="receipt" data-open="${s.thread}"><span class="dot ${s.failed ? '' : 'ok'}"${s.failed ? ' style="background:#c0392b"' : ''}></span><span class="t">${esc(name(s.thread))}</span><span class="o">${esc(s.text)}</span><span class="open">Read</span></button>`;
+  if (s.kind === 'receipt') return `<button class="receipt" data-open="${s.thread}" data-rid="${s.id}"><span class="dot ${s.failed ? '' : 'ok'}"${s.failed ? ' style="background:#c0392b"' : ''}></span><span class="t">${esc(name(s.thread))}</span><span class="o">${esc(s.text)}</span><span class="open">Read</span></button>`;
   return '';
 }
 let lastId = 0;
@@ -351,6 +351,8 @@ function cards() {
 const shownAsks = new Set(), shownChips = new Set();
 function needs() {
   const list = cards();
+  // stream cards are drawn once, so read ones lose their green here
+  for (const el of $('stream').querySelectorAll('[data-rid]')) if (seen.has(+el.dataset.rid)) el.querySelector('.dot').classList.remove('ok');
   $('fyTitle').textContent = 'For you';
   const busyN = Object.values(threads).filter(t => !t.closed && ['working', 'queued'].includes(t.state)).length;
   $('hubStats').textContent = `${list.length} waiting for you · ${busyN} working`;
@@ -449,6 +451,7 @@ async function openThread(k) {
   $('pBody').innerHTML = (turns.length ? turns.map(bubble).join('') : '<p class="tools">Working… its conversation shows here once it has one.</p>') + (ask ? qcard(ask) : '') + (['working', 'queued'].includes(t.state) ? '<p class="tools">✻ Working on your answer…</p>' : '');
   $('panel').classList.add('open');
   $('pBody').scrollTop = $('pBody').scrollHeight;
+  if (!document.hidden) markSeen(all.filter(x => x.kind === 'receipt' && x.thread === k).map(x => x.id));
 }
 
 const drawQuote = () => $('quotes').innerHTML = quote ? `<div class="quote"><span>${quote.text ? `<b>${esc(quote.from)}:</b> ${esc(quote.text.length > 160 ? quote.text.slice(0, 160) + '…' : quote.text)}` : `Replying to <b>${esc(quote.from)}</b>`}</span><button type="button" id="unquote" aria-label="Stop replying">×</button></div>` : '';
