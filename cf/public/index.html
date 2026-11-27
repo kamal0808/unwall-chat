@@ -277,7 +277,7 @@ const said = {}; // id -> your message, so a late answer can say what it answers
 const name = id => threads[id]?.name || 'thread';
 const bubble = t => t.role === 'user'
   ? `<div class="you">${esc(t.text)}</div>`
-  : `<div class="claude">${t.tools?.length ? `<p class="tools">Used ${t.tools.length} tools: ${esc([...new Set(t.tools)].join(', '))}</p>` : ''}${md(t.text.replace(/^CHOICES:[\s\S]*$/m, '').replace(/^(RECEIPT|ASK|NEXT):\s*/gm, '**$1:** '))}</div>`;
+  : `<div class="claude">${t.tools?.length ? `<p class="tools">Used ${t.tools.length} tools: ${esc([...new Set(t.tools)].join(', '))}</p>` : ''}${md(t.text.replace(/^(NEXT|ASK):[\s\S]*$/m, '').replace(/^(RECEIPT|ASK|NEXT):\s*/gm, '**$1:** '))}</div>`;
 function item(s) {
   if (s.kind === 'you') { said[s.id] = s.text; const q = s.text.match(/^((?:> .*\n?)+)\n*([\s\S]*)$/), pic = s.images ? `<div class="re">📎 ${s.images} image${s.images > 1 ? 's' : ''}</div>` : ''; return q ? `<div class="you"><blockquote>${esc(q[1].replace(/^> /gm, ''))}</blockquote>${esc(q[2])}${pic}</div>` : `<div class="you">${esc(s.text)}${pic}</div>` }
   if (s.kind === 'claude') {
