@@ -300,14 +300,16 @@ function item(s) {
 let lastId = 0;
 const toThread = new Set();
 const QS = {};
-function qcard(s) {
+function qcard(s, read) {
+  // read === true only: the mock's .map(qcard) passes an index here
+  const readBtn = read === true ? `<button class="btn" data-open="${s.thread}">Read</button>` : '';
   const opts = s.options?.length ? s.options : YES_NO.test(s.text) ? [{label: 'Yes'}, {label: 'No'}] : [];
   const mode = s.mode || (s.options?.length > 2 ? 'one' : 'next');
   const picked = QS[s.id]?.picked || new Set(), last = [...picked].at(-1);  // redraws (every poll) keep what was ticked
   QS[s.id] = {...s, opts, mode, picked};
   const body = mode === 'next'
-    ? `<div class="row">${opts.map((o, i) => `<button class="btn${i ? '' : ' primary'}" data-qpick="${s.id}|${i}">${esc(o.label)}</button>`).join('')}<button class="btn" data-qother="${s.id}">${opts.length ? 'Other…' : 'Answer'}</button></div>`
-    : `<div class="opts${mode === 'many' ? ' multi' : ''}">${opts.map((o, i) => `<button class="opt${picked.has(i) ? ' on' : ''}" data-qopt="${s.id}|${i}" aria-pressed="${picked.has(i)}"><span class="box"></span><span><b>${esc(o.label)}${o.rec ? '<span class="rec">Recommended</span>' : ''}</b>${o.note ? `<small>${esc(o.note)}</small>` : ''}</span></button>`).join('')}<button class="opt" data-qother="${s.id}"><span class="box"></span><span><b>Other…</b><small>Type your own answer</small></span></button></div><div class="preview">${last !== undefined ? esc(opts[last]?.preview || '') : ''}</div><div class="row"><button class="btn primary" data-qgo="${s.id}"${picked.size ? '' : ' disabled'}>${mode === 'many' && picked.size ? `Send ${picked.size}` : 'Send'}</button></div>`;
+    ? `<div class="row">${readBtn}${opts.map((o, i) => `<button class="btn${i ? '' : ' primary'}" data-qpick="${s.id}|${i}">${esc(o.label)}</button>`).join('')}<button class="btn" data-qother="${s.id}">${opts.length ? 'Other…' : 'Answer'}</button></div>`
+    : `<div class="opts${mode === 'many' ? ' multi' : ''}">${opts.map((o, i) => `<button class="opt${picked.has(i) ? ' on' : ''}" data-qopt="${s.id}|${i}" aria-pressed="${picked.has(i)}"><span class="box"></span><span><b>${esc(o.label)}${o.rec ? '<span class="rec">Recommended</span>' : ''}</b>${o.note ? `<small>${esc(o.note)}</small>` : ''}</span></button>`).join('')}<button class="opt" data-qother="${s.id}"><span class="box"></span><span><b>Other…</b><small>Type your own answer</small></span></button></div><div class="preview">${last !== undefined ? esc(opts[last]?.preview || '') : ''}</div><div class="row">${readBtn}<button class="btn primary" data-qgo="${s.id}"${picked.size ? '' : ' disabled'}>${mode === 'many' && picked.size ? `Send ${picked.size}` : 'Send'}</button></div>`;
   return `<div class="q" data-q="${s.id}"><span class="k">${{next: 'Next step', one: 'Pick one', many: 'Pick many'}[mode]} · ${esc(s.label || name(s.thread))}</span><span class="ask">${esc(s.text)}</span>${body}</div>`;
 }
 async function answerQ(q, words) {
@@ -362,7 +364,7 @@ function needs() {
   $('earlier').innerHTML = old.map(x => `<div class="ask old"><p><b>${x.kind === 'claude' ? 'Answer' : esc(name(x.thread))}:</b> <span class="txt">${esc(x.text)}</span></p>${x.thread ? `<button class="btn" data-open="${x.thread}">Read</button><button class="btn" data-reply="${x.thread}">Reply</button>` : ''}</div>`).join('') || '<p class="none">Nothing yet.</p>';
   const typing = document.activeElement?.closest?.('.own');  // don't redraw a card while its own answer is being typed
   if (!typing || !$('asks').contains(typing)) $('asks').innerHTML = list.map(x => {
-    if (x.kind === 'ask') return qcard(x);
+    if (x.kind === 'ask') return qcard(x, true);
     const t = threads[x.thread], who = x.kind === 'claude' ? 'Answer' : esc(t.name), kind = {ask: 'Question', receipt: 'Reply', cross: 'Goals across the wall'}[x.kind] || '';
     const btns = x.kind === 'cross'
       ? `<button class="btn" data-open="${x.thread}" data-seen="${x.id}">Read</button><button class="btn primary" data-cross="${x.thread}|allow" data-seen="${x.id}">Allow once</button><button class="btn" data-cross="${x.thread}|deny" data-seen="${x.id}">No</button>`
